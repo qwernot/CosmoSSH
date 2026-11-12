@@ -1,0 +1,10 @@
+name = "cosmossh-sync-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# To bind your KV namespace:
+# 1. Run: npx wrangler kv:namespace create COSMOSSH_KV
+# 2. Paste the returned ID below:
+[[kv_namespaces]]
+binding = "COSMOSSH_KV"
+id = "1f89099b5c2540a9935dbe8483b60cd5"

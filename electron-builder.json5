@@ -1,0 +1,66 @@
+/**
+ * @see https://www.electron.build/configuration/configuration
+ */
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.cosmossh.app",
+  "productName": "CosmoSSH",
+  "directories": {
+    "output": "release"
+  },
+  "npmRebuild": false,
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    "assets/**/*"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/ssh2/**/*"
+  ],
+  "linux": {
+    "target": [
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      },
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Development;Utility;",
+    "synopsis": "Next-generation SSH Terminal & SFTP Client",
+    "description": "CosmoSSH is a modern, fast, secure SSH terminal, SFTP client and server manager with Cloudflare E2EE sync.",
+    "icon": "assets/icon.png",
+    "maintainer": "CosmoSSH Team <support@cosmossh.app>"
+  },
+  "deb": {
+    "depends": [
+      "libnotify4",
+      "libxtst6",
+      "libnss3"
+    ]
+  },
+  "win": {
+    "signAndEditExecutable": false,
+    "verifyUpdateCodeSignature": false,
+    "target": [
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "CosmoSSH"
+  }
+}

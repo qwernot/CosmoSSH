@@ -1,0 +1,46 @@
+name: Build & Release CosmoSSH
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build and Package Linux (deb)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm dist:linux
+
+      - name: Build and Package Windows (exe/nsis)
+        if: matrix.os == 'windows-latest'
+        run: pnpm dist:win
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CosmoSSH-${{ matrix.os }}
+          path: release/*.*
