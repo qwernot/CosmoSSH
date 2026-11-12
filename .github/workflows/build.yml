@@ -2,45 +2,63 @@ name: Build & Release CosmoSSH
 
 on:
   push:
-    branches: [ main, master ]
     tags:
       - 'v*'
   workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+permissions:
+  contents: write
 
+jobs:
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Install 7zip and zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full zip
+
+      - name: Generate Windows .zip Package
+        run: |
+          mkdir -p win-temp
+          7z x release/CosmoSSH-1.0.0-win.7z -owin-temp
+          cd win-temp
+          zip -r ../release/CosmoSSH-1.0.0-win.zip .
+          cd ..
+          rm -rf win-temp
+          ls -lh release/
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
         with:
-          node-version: 20
+          files: |
+            release/cosmossh_1.0.0_amd64.deb
+            release/CosmoSSH-1.0.0-win.zip
+            release/CosmoSSH-1.0.0-win.7z
+          name: CosmoSSH ${{ github.ref_name }}
+          body: |
+            ## 🌌 CosmoSSH 跨平台 SSH 终端与 SFTP 客户端 ${{ github.ref_name }} 发布！
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 10
+            专为极客与运维工程师打造的轻量级、高颜值跨平台终端软件。
 
-      - name: Install dependencies
-        run: pnpm install
+            ### 📦 安装包下载列表
 
-      - name: Build and Package Linux (deb)
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm dist:linux
+            | 操作系统 | 安装包文件 | 说明 |
+            | :--- | :--- | :--- |
+            | **Windows (64位 zip)** | [CosmoSSH-1.0.0-win.zip](https://github.com/qwernot/CosmoSSH/releases/download/${{ github.ref_name }}/CosmoSSH-1.0.0-win.zip) | 绿色便携版，解压后双击 `CosmoSSH.exe` 即可运行 |
+            | **Windows (64位 7z)** | [CosmoSSH-1.0.0-win.7z](https://github.com/qwernot/CosmoSSH/releases/download/${{ github.ref_name }}/CosmoSSH-1.0.0-win.7z) | 7z 高压缩绿色版 |
+            | **Linux (deb)** | [cosmossh_1.0.0_amd64.deb](https://github.com/qwernot/CosmoSSH/releases/download/${{ github.ref_name }}/cosmossh_1.0.0_amd64.deb) | Debian / Ubuntu / Deepin 标准安装包，直接 `sudo dpkg -i` 安装 |
 
-      - name: Build and Package Windows (exe/nsis)
-        if: matrix.os == 'windows-latest'
-        run: pnpm dist:win
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: CosmoSSH-${{ matrix.os }}
-          path: release/*.*
+            ### 🚀 核心功能亮点
+            - 🌌 **深空暗黑主题**：高质感宇宙深空视觉，沉浸式暗黑顶栏与极光配色。
+            - ⚡ **高性能 SSH 终端**：多会话多标签页，支持同一机器多开独立会话，内置快捷指令。
+            - 🔄 **会话常驻保活**：离开终端页面会话长连接绝不断开，后台持续流式消费输出。
+            - 📂 **全功能 SFTP 管理器**：支持双向传输、传输队列监视、双击在线查看与编辑远程文件。
+            - 🏷️ **自定义资产分组**：支持添加/重命名/切换配色/安全删除服务器分组。
+            - 📡 **双模真实延迟测速**：原生 ICMP Ping + TCP SSH 指纹协议头探测，穿透本地代理与 TUN 模式。
+            - 🛡️ **Cloudflare 端到端加密云同步**：AES-256-GCM + PBKDF2 零知识加密跨设备同步。
+          draft: false
+          prerelease: false
+          generate_release_notes: false

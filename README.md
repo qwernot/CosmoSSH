@@ -4,6 +4,18 @@ CosmoSSH 是专为运维、开发者和极客打造的新一代轻量级、高�
 
 ---
 
+## 📥 安装包下载 (GitHub Releases)
+
+可直接前往 [GitHub Releases 页面](https://github.com/qwernot/CosmoSSH/releases) 获取各平台编译产物：
+
+| 平台 | 安装包 | 格式 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **Windows 64位** | [CosmoSSH-1.0.0-win.zip](https://github.com/qwernot/CosmoSSH/releases) | `.zip` 便携压缩包 | 解压后双击 `CosmoSSH.exe` 即可运行 |
+| **Windows 64位 (7z)** | [CosmoSSH-1.0.0-win.7z](https://github.com/qwernot/CosmoSSH/releases) | `.7z` 高压缩包 | 极小体积便携版 |
+| **Linux** | [cosmossh_1.0.0_amd64.deb](https://github.com/qwernot/CosmoSSH/releases) | `.deb` 标准包 | `sudo dpkg -i cosmossh_1.0.0_amd64.deb` |
+
+---
+
 ## 核心特性
 
 - 🌌 **深空科幻高质感 UI**：采用宇宙暗黑主题与微发光视觉设计，低眼疲劳，流畅顺滑。
