@@ -3,6 +3,7 @@ import path from 'path';
 import { AppStore } from './store';
 import { SSHService } from './ssh-service';
 import { SFTPService } from './sftp-service';
+import { LocalFSService } from './local-fs-service';
 import { registerIpcHandlers } from './ipc-handlers';
 
 // Disable default menu
@@ -16,6 +17,7 @@ let mainWindow: BrowserWindow | null = null;
 const store = new AppStore();
 const sshService = new SSHService();
 const sftpService = new SFTPService(sshService);
+const localFSService = new LocalFSService();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -44,7 +46,7 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  registerIpcHandlers(mainWindow, store, sshService, sftpService);
+  registerIpcHandlers(mainWindow, store, sshService, sftpService, localFSService);
 
   // Load Vite Dev Server in development or index.html in production
   if (process.env.VITE_DEV_SERVER_URL) {

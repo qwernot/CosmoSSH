@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow, shell, clipboard, app, nativeImage } fr
 import { AppStore } from './store';
 import { SSHService } from './ssh-service';
 import { SFTPService } from './sftp-service';
+import { LocalFSService } from './local-fs-service';
 import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo } from '../shared/types';
 import fs from 'fs';
 import path from 'path';
@@ -99,7 +100,8 @@ export function registerIpcHandlers(
   mainWindow: BrowserWindow,
   store: AppStore,
   sshService: SSHService,
-  sftpService: SFTPService
+  sftpService: SFTPService,
+  localFSService: LocalFSService
 ) {
   // Network Ping Handler
   ipcMain.handle('network:pingHost', async (_event, { host, port, timeout = 3000 }) => {
@@ -412,6 +414,27 @@ export function registerIpcHandlers(
     }
   });
 
+  // Local File System Handlers (WinSCP dual-pane)
+  ipcMain.handle('localFs:list', async (_event, dirPath?: string) => {
+    return localFSService.listDirectory(dirPath);
+  });
+
+  ipcMain.handle('localFs:getSpecialDirs', async () => {
+    return localFSService.getSpecialDirs();
+  });
+
+  ipcMain.handle('localFs:mkdir', async (_event, dirPath: string) => {
+    return localFSService.mkdir(dirPath);
+  });
+
+  ipcMain.handle('localFs:delete', async (_event, targetPath: string) => {
+    return localFSService.delete(targetPath);
+  });
+
+  ipcMain.handle('localFs:openPath', async (_event, targetPath: string) => {
+    return shell.openPath(targetPath);
+  });
+
   // Updater: Check for updates via GitHub Releases
   function compareVersions(latest: string, current: string): boolean {
     const l = latest.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
@@ -426,7 +449,7 @@ export function registerIpcHandlers(
   }
 
   ipcMain.handle('updater:checkUpdate', async (): Promise<UpdateInfo> => {
-    const currentVersion = '1.0.1';
+    const currentVersion = '1.0.2';
     try {
       const res = await fetch('https://api.github.com/repos/qwernot/CosmoSSH/releases/latest', {
         headers: { 'User-Agent': 'CosmoSSH-Client' },

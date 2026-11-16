@@ -12,7 +12,7 @@ import { AppDataPayload, CloudSyncConfig, HostConfig, HostGroup, AppSettings, Up
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('hosts');
   const [appData, setAppData] = useState<AppDataPayload>({
-    version: '1.0.1',
+    version: '1.0.2',
     updatedAt: Date.now(),
     hosts: [],
     groups: [],

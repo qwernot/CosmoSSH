@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo } from '../shared/types';
+import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo, SFTPFileItem } from '../shared/types';
 
 export const api = {
   // Store
@@ -212,6 +212,20 @@ export const api = {
     },
     showInFolder: (filePath: string): Promise<void> =>
       ipcRenderer.invoke('updater:showInFolder', filePath),
+  },
+
+  // Local File System (WinSCP Dual-Pane)
+  localFs: {
+    list: (dirPath?: string): Promise<{ path: string; files: SFTPFileItem[] }> =>
+      ipcRenderer.invoke('localFs:list', dirPath),
+    getSpecialDirs: (): Promise<{ desktop: string; downloads: string; home: string }> =>
+      ipcRenderer.invoke('localFs:getSpecialDirs'),
+    mkdir: (dirPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('localFs:mkdir', dirPath),
+    delete: (targetPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('localFs:delete', targetPath),
+    openPath: (targetPath: string): Promise<string> =>
+      ipcRenderer.invoke('localFs:openPath', targetPath),
   },
 };
 

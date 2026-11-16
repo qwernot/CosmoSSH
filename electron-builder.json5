@@ -48,6 +48,9 @@
   "win": {
     "signAndEditExecutable": false,
     "verifyUpdateCodeSignature": false,
+    "requestedExecutionLevel": "asInvoker",
+    "publisherName": "CosmoSSH Team",
+    "legalTrademarks": "CosmoSSH",
     "target": [
       {
         "target": "zip",

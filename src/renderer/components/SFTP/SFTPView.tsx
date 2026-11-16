@@ -13,17 +13,16 @@ import {
   Edit3, 
   Trash2, 
   FileCode, 
-  Key, 
-  Server,
-  ArrowRight,
-  Shield,
-  Clock,
-  HardDrive
+  Monitor,
+  Columns,
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 import { HostConfig, SFTPFileItem, TransferQueueItem } from '@shared/types';
 import { formatBytes, formatDate, formatPermissions } from '../../utils/format';
 import { FileEditorModal } from './FileEditorModal';
 import { TransferQueue } from './TransferQueue';
+import { LocalFilePane } from './LocalFilePane';
 
 interface SFTPViewProps {
   hosts: HostConfig[];
@@ -38,7 +37,16 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Drag & Drop State (Desktop Drag-in & Drag-out)
+  // WinSCP Dual-Pane Mode
+  const [isDualPane, setIsDualPane] = useState<boolean>(true);
+  const [localPath, setLocalPath] = useState<string>('');
+  const [specialDirs, setSpecialDirs] = useState<{ desktop: string; downloads: string; home: string }>({
+    desktop: '',
+    downloads: '',
+    home: '',
+  });
+
+  // Drag & Drop State (Desktop Drag-in & Local Pane Drag-in)
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
 
@@ -57,6 +65,16 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       setSelectedHostId(initialHost.id);
     }
   }, [initialHost]);
+
+  useEffect(() => {
+    // Load local special dirs for quick download buttons
+    window.cosmossh.localFs.getSpecialDirs().then((dirs) => {
+      setSpecialDirs(dirs);
+      if (dirs.desktop && !localPath) {
+        setLocalPath(dirs.desktop);
+      }
+    }).catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (selectedHost) {
@@ -134,15 +152,15 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const uploadLocalFiles = async (filePaths: string[], targetDirPath: string = currentPath) => {
     if (!selectedHost || !filePaths || filePaths.length === 0) return;
 
-    for (const localPath of filePaths) {
-      const filename = localPath.split(/[\/\\]/).pop() || 'upload';
+    for (const localFilePath of filePaths) {
+      const filename = localFilePath.split(/[\/\\]/).pop() || 'upload';
       const remotePath = targetDirPath === '/' ? `/${filename}` : `${targetDirPath}/${filename}`;
       const transferId = `trans_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
       const newItem: TransferQueueItem = {
         id: transferId,
         type: 'upload',
-        localPath,
+        localPath: localFilePath,
         remotePath,
         filename,
         totalSize: 100,
@@ -159,7 +177,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       });
 
       try {
-        const res = await window.cosmossh.sftp.upload(transferId, sessionId, selectedHost, localPath, remotePath);
+        const res = await window.cosmossh.sftp.upload(transferId, sessionId, selectedHost, localFilePath, remotePath);
         cleanup();
         if (res.success) {
           setTransfers((prev) =>
@@ -188,14 +206,12 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     }
   };
 
-  // Drag & Drop Handlers (Drag from Desktop/File Manager into SFTP)
+  // Drag & Drop Handlers (Drag from Desktop/File Manager or LocalFilePane into Remote SFTP Pane)
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragCounter.current += 1;
-    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-      setIsDraggingOver(true);
-    }
+    setIsDraggingOver(true);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -220,6 +236,21 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     dragCounter.current = 0;
     setIsDraggingOver(false);
 
+    // 1. Check if dropped from LocalFilePane (WinSCP mode)
+    const localDataStr = e.dataTransfer.getData('application/cosmossh-local-item');
+    if (localDataStr) {
+      try {
+        const localItem = JSON.parse(localDataStr);
+        if (localItem.fullPath) {
+          await uploadLocalFiles([localItem.fullPath], currentPath);
+          return;
+        }
+      } catch (err) {
+        console.error('Failed to parse local drag item:', err);
+      }
+    }
+
+    // 2. Check if dropped from external OS desktop
     if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
 
     const fileList = Array.from(e.dataTransfer.files);
@@ -237,17 +268,26 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     }
   };
 
-  const handleDownload = async (item: SFTPFileItem) => {
+  // Core download logic (supports targetLocalPath directly or prompts user)
+  const handleDownload = async (item: SFTPFileItem, customLocalPath?: string) => {
     if (!selectedHost) return;
     const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
-    const localPath = await window.cosmossh.dialog.selectDownloadLocation(item.name);
-    if (!localPath) return;
+
+    let localSavePath = customLocalPath;
+    if (!localSavePath) {
+      const selected = await window.cosmossh.dialog.selectDownloadLocation(item.name);
+      if (!selected) return;
+      localSavePath = selected;
+    }
+
+    const finalLocalPath = localSavePath || '';
+    if (!finalLocalPath) return;
 
     const transferId = `trans_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const newItem: TransferQueueItem = {
       id: transferId,
       type: 'download',
-      localPath,
+      localPath: finalLocalPath,
       remotePath,
       filename: item.name,
       totalSize: item.size || 100,
@@ -264,7 +304,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     });
 
     try {
-      const res = await window.cosmossh.sftp.download(transferId, sessionId, selectedHost, remotePath, localPath);
+      const res = await window.cosmossh.sftp.download(transferId, sessionId, selectedHost, remotePath, finalLocalPath);
       cleanup();
       if (res.success) {
         setTransfers((prev) =>
@@ -281,6 +321,56 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
         prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: err.message } : t))
       );
     }
+  };
+
+  // Quick 1-click Download to Desktop
+  const handleQuickDownloadToDesktop = (item: SFTPFileItem) => {
+    if (!specialDirs.desktop) {
+      handleDownload(item);
+      return;
+    }
+    const isWin = specialDirs.desktop.includes('\\') || /^[a-zA-Z]:/.test(specialDirs.desktop);
+    const separator = isWin ? '\\' : '/';
+    const targetPath = specialDirs.desktop.endsWith(separator)
+      ? `${specialDirs.desktop}${item.name}`
+      : `${specialDirs.desktop}${separator}${item.name}`;
+    handleDownload(item, targetPath);
+  };
+
+  // Quick 1-click Download to Downloads folder
+  const handleQuickDownloadToDownloads = (item: SFTPFileItem) => {
+    if (!specialDirs.downloads) {
+      handleDownload(item);
+      return;
+    }
+    const isWin = specialDirs.downloads.includes('\\') || /^[a-zA-Z]:/.test(specialDirs.downloads);
+    const separator = isWin ? '\\' : '/';
+    const targetPath = specialDirs.downloads.endsWith(separator)
+      ? `${specialDirs.downloads}${item.name}`
+      : `${specialDirs.downloads}${separator}${item.name}`;
+    handleDownload(item, targetPath);
+  };
+
+  // Callback when item dropped from Remote Pane into LocalFilePane
+  const handleDownloadFromRemote = (
+    remoteItem: { name: string; remotePath: string; isDir: boolean },
+    targetLocalDir: string
+  ) => {
+    const isWin = targetLocalDir.includes('\\') || /^[a-zA-Z]:/.test(targetLocalDir);
+    const separator = isWin ? '\\' : '/';
+    const targetLocalPath = targetLocalDir.endsWith(separator)
+      ? `${targetLocalDir}${remoteItem.name}`
+      : `${targetLocalDir}${separator}${remoteItem.name}`;
+
+    const item: SFTPFileItem = {
+      name: remoteItem.name,
+      type: remoteItem.isDir ? 'd' : '-',
+      size: 0,
+      modifyTime: Math.floor(Date.now() / 1000),
+      accessTime: Math.floor(Date.now() / 1000),
+      permissions: 0o644,
+    };
+    handleDownload(item, targetLocalPath);
   };
 
   const handleDelete = async (item: SFTPFileItem) => {
@@ -361,14 +451,14 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-cosmo-950 overflow-hidden">
-      {/* Top Bar: Host Selector & Connection Status */}
-      <header className="h-16 px-6 border-b border-cosmo-800 flex items-center justify-between shrink-0 bg-cosmo-900/60 backdrop-blur">
+      {/* Top Bar: Host Selector & WinSCP Dual-Pane Mode Switcher */}
+      <header className="h-14 px-5 border-b border-cosmo-800 flex items-center justify-between shrink-0 bg-cosmo-900/60 backdrop-blur">
         <div className="flex items-center gap-3">
           <FolderSync className="w-5 h-5 text-cosmo-cyan" />
-          <h2 className="text-base font-bold text-slate-100">SFTP 远程文件传输</h2>
+          <h2 className="text-sm font-bold text-slate-100">SFTP 文件传输</h2>
 
           {/* Host Selector */}
-          <div className="ml-4 flex items-center gap-2">
+          <div className="ml-3 flex items-center gap-2">
             <span className="text-xs text-slate-400">目标服务器:</span>
             <select
               value={selectedHostId}
@@ -376,7 +466,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                 setSelectedHostId(e.target.value);
                 setCurrentPath('/');
               }}
-              className="bg-cosmo-950 border border-cosmo-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cosmo-cyan"
+              className="bg-cosmo-950 border border-cosmo-700 rounded-xl px-3 py-1 text-xs text-slate-200 focus:outline-none focus:border-cosmo-cyan"
             >
               {hosts.map((h) => (
                 <option key={h.id} value={h.id}>
@@ -387,265 +477,334 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           </div>
         </div>
 
-        {selectedHost && (
-          <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>{selectedHost.username}@{selectedHost.host}:{selectedHost.port}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {selectedHost && (
+            <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>{selectedHost.username}@{selectedHost.host}:{selectedHost.port}</span>
+            </div>
+          )}
+
+          {/* Dual-Pane / Single-Pane Toggle */}
+          <button
+            onClick={() => setIsDualPane(!isDualPane)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border shadow-sm ${
+              isDualPane
+                ? 'bg-cosmo-cyan/15 text-cosmo-cyan border-cosmo-cyan/40 shadow-glow-cyan/10'
+                : 'bg-cosmo-800 text-slate-300 border-cosmo-700 hover:bg-cosmo-750'
+            }`}
+            title="切换 WinSCP 双栏传输模式 / 单栏远程模式"
+          >
+            <Columns className="w-3.5 h-3.5" />
+            <span>{isDualPane ? 'WinSCP 双栏模式 (开启)' : '单栏模式'}</span>
+          </button>
+        </div>
       </header>
 
-      {/* Navigation Path & Action Bar */}
-      <div className="p-4 bg-cosmo-900 border-b border-cosmo-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        {/* Breadcrumb / Path Input */}
-        <div className="flex items-center gap-2 flex-1 min-w-[300px]">
-          <button
-            onClick={handleGoUp}
-            disabled={currentPath === '/'}
-            className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 disabled:opacity-40 transition-colors"
-            title="返回上一级"
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleNavigate('/')}
-            className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors"
-            title="根目录 /"
-          >
-            <Home className="w-4 h-4" />
-          </button>
-
-          {/* Path Input Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleNavigate(pathInput);
-            }}
-            className="flex-1 flex items-center"
-          >
-            <input
-              type="text"
-              value={pathInput}
-              onChange={(e) => setPathInput(e.target.value)}
-              className="w-full bg-cosmo-950 border border-cosmo-700 rounded-xl px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cosmo-cyan"
-              placeholder="/var/log..."
+      {/* Main Content Area: WinSCP Dual-Pane (Left: Local, Right: Remote) */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Pane: Local PC File System */}
+        {isDualPane && (
+          <div className="w-1/2 min-w-[340px] flex flex-col h-full">
+            <LocalFilePane
+              currentPath={localPath}
+              onPathChange={setLocalPath}
+              onUploadToRemote={uploadLocalFiles}
+              onDownloadFromRemote={handleDownloadFromRemote}
             />
-          </form>
+          </div>
+        )}
 
-          <button
-            onClick={() => loadDirectory(currentPath)}
-            className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors"
-            title="刷新"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+        {/* Right Pane: Remote SFTP Server */}
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-cosmo-950">
+          {/* Remote Navigation Path & Action Bar */}
+          <div className="p-2.5 bg-cosmo-900 border-b border-cosmo-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
+            {/* Breadcrumb / Path Input */}
+            <div className="flex items-center gap-1.5 flex-1 min-w-[260px]">
+              <button
+                onClick={handleGoUp}
+                disabled={currentPath === '/'}
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 disabled:opacity-40 transition-colors shrink-0"
+                title="返回上一级"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleNavigate('/')}
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+                title="根目录 /"
+              >
+                <Home className="w-3.5 h-3.5" />
+              </button>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleUpload}
-            className="px-3 py-1.5 rounded-xl bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-xs font-semibold flex items-center gap-1.5 border border-cosmo-cyan/30 shadow-sm"
-          >
-            <Upload className="w-3.5 h-3.5" /> 上传文件
-          </button>
-          <button
-            onClick={handleMkdir}
-            className="px-3 py-1.5 rounded-xl bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1.5 border border-cosmo-700"
-          >
-            <FolderPlus className="w-3.5 h-3.5" /> 新建文件夹
-          </button>
-          <button
-            onClick={handleNewFile}
-            className="px-3 py-1.5 rounded-xl bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1.5 border border-cosmo-700"
-          >
-            <FilePlus className="w-3.5 h-3.5" /> 新建文件
-          </button>
-        </div>
-      </div>
+              {/* Path Input Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleNavigate(pathInput);
+                }}
+                className="flex-1 flex items-center min-w-0"
+              >
+                <input
+                  type="text"
+                  value={pathInput}
+                  onChange={(e) => setPathInput(e.target.value)}
+                  className="w-full bg-cosmo-950 border border-cosmo-700 rounded-lg px-2.5 py-1 text-xs font-mono text-slate-200 focus:outline-none focus:border-cosmo-cyan truncate"
+                  placeholder="/var/log..."
+                />
+              </form>
 
-      {/* File List Table */}
-      <div 
-        className="flex-1 overflow-y-auto p-4 relative"
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {/* Drag & Drop Visual Overlay */}
-        {isDraggingOver && (
-          <div className="absolute inset-4 bg-cosmo-950/90 backdrop-blur-md border-2 border-dashed border-cosmo-cyan rounded-2xl flex flex-col items-center justify-center z-40 pointer-events-none shadow-glow-cyan/20 animate-in fade-in duration-150">
-            <div className="w-16 h-16 rounded-2xl bg-cosmo-900 border border-cosmo-cyan/40 flex items-center justify-center text-cosmo-cyan shadow-glow-cyan/30 shadow-lg mb-3">
-              <Upload className="w-8 h-8 animate-bounce text-cosmo-cyan" />
+              <button
+                onClick={() => loadDirectory(currentPath)}
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+                title="刷新远程文件"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
-            <h3 className="text-base font-bold text-slate-100">松开鼠标立即上传至此目录</h3>
-            <p className="text-xs text-cosmo-cyan font-mono mt-1.5 px-3 py-1 bg-cosmo-900/80 rounded-lg border border-cosmo-800">
-              {currentPath}
-            </p>
-            <p className="text-[11px] text-slate-400 mt-2">
-              ✨ 支持多文件与文件夹批量拖拽上传 (WinSCP 交互)
-            </p>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleUpload}
+                className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-xs font-semibold flex items-center gap-1 border border-cosmo-cyan/30 shadow-sm"
+              >
+                <Upload className="w-3.5 h-3.5" /> 上传
+              </button>
+              <button
+                onClick={handleMkdir}
+                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700"
+              >
+                <FolderPlus className="w-3.5 h-3.5" /> 新建文件夹
+              </button>
+              <button
+                onClick={handleNewFile}
+                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700"
+              >
+                <FilePlus className="w-3.5 h-3.5" /> 新建文件
+              </button>
+            </div>
           </div>
-        )}
 
-        {error ? (
-          <div className="h-64 flex flex-col items-center justify-center text-center p-6 bg-cosmo-900/30 rounded-2xl border border-dashed border-rose-500/30">
-            <p className="text-sm font-semibold text-rose-400 mb-2">连接或读取目录失败</p>
-            <p className="text-xs text-slate-500 mb-4">{error}</p>
-            <button
-              onClick={() => loadDirectory(currentPath)}
-              className="px-4 py-2 rounded-xl text-xs font-medium bg-cosmo-800 hover:bg-cosmo-700 text-slate-200"
-            >
-              重试
-            </button>
-          </div>
-        ) : (
-          <div className="bg-cosmo-900 rounded-2xl border border-cosmo-800 overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-cosmo-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider bg-cosmo-850/60">
-                  <th className="py-3 px-4">文件名 (支持拖到桌面下载 / 拖入上传)</th>
-                  <th className="py-3 px-4 w-28">大小</th>
-                  <th className="py-3 px-4 w-32">权限</th>
-                  <th className="py-3 px-4 w-44">修改时间</th>
-                  <th className="py-3 px-4 w-32 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-cosmo-800/60 text-xs text-slate-300 font-mono">
-                {files.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center text-slate-500 font-sans">
-                      空目录（可直接从桌面拖拽文件到此处上传）
-                    </td>
-                  </tr>
-                )}
-                {files.map((item) => {
-                  const isDir = item.type === 'd';
-                  return (
-                    <tr
-                      key={item.name}
-                      draggable={!isDir}
-                      onDragStart={(e) => {
-                        if (isDir) return;
-                        // Prevent default browser link/image drag and initiate native Electron drag-out
-                        e.preventDefault();
-                        if (selectedHost) {
-                          const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
-                          window.cosmossh.sftp.startDrag({
-                            sessionId,
-                            hostConfig: selectedHost,
-                            remotePath,
-                            filename: item.name,
-                          });
-                        }
-                      }}
-                      onDragOver={(e) => {
-                        if (isDir) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          e.dataTransfer.dropEffect = 'copy';
-                        }
-                      }}
-                      onDrop={async (e) => {
-                        if (isDir) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setIsDraggingOver(false);
-                          dragCounter.current = 0;
-                          const targetDir = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
-                          const fileList = Array.from(e.dataTransfer.files);
-                          const localPaths = fileList.map((f) => window.cosmossh.getPathForFile(f)).filter(Boolean);
-                          if (localPaths.length > 0) {
-                            await uploadLocalFiles(localPaths, targetDir);
-                          }
-                        }
-                      }}
-                      onDoubleClick={() => handleOpenFileOrDir(item)}
-                      className={`hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none ${
-                        !isDir ? 'hover:text-slate-100 cursor-grab active:cursor-grabbing' : ''
-                      }`}
-                      title={
-                        !isDir
-                          ? '按住拖动可直接下载至本地桌面/文件夹，双击可在线编辑'
-                          : '双击进入目录，支持将本地文件拖拽至此文件夹上传'
-                      }
-                    >
-                      <td className="py-2.5 px-4 flex items-center gap-2.5">
-                        {isDir ? (
-                          <Folder className="w-4 h-4 text-amber-400 shrink-0" />
-                        ) : (
-                          <File className="w-4 h-4 text-cosmo-cyan shrink-0" />
-                        )}
-                        <span className={`truncate max-w-md ${isDir ? 'font-semibold text-slate-100' : 'text-slate-300'}`}>
-                          {item.name}
-                        </span>
-                      </td>
+          {/* File List Table */}
+          <div 
+            className="flex-1 overflow-y-auto p-2 relative"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag & Drop Visual Overlay */}
+            {isDraggingOver && (
+              <div className="absolute inset-2 bg-cosmo-950/90 backdrop-blur-md border-2 border-dashed border-cosmo-cyan rounded-xl flex flex-col items-center justify-center z-40 pointer-events-none shadow-glow-cyan/20 animate-in fade-in duration-150">
+                <div className="w-16 h-16 rounded-2xl bg-cosmo-900 border border-cosmo-cyan/40 flex items-center justify-center text-cosmo-cyan shadow-glow-cyan/30 shadow-lg mb-3">
+                  <Upload className="w-8 h-8 animate-bounce text-cosmo-cyan" />
+                </div>
+                <h3 className="text-base font-bold text-slate-100">松开鼠标立即上传至此远程目录</h3>
+                <p className="text-xs text-cosmo-cyan font-mono mt-1.5 px-3 py-1 bg-cosmo-900/80 rounded-lg border border-cosmo-800 truncate max-w-sm">
+                  {currentPath}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  ✨ 支持从左侧本地电脑直接拖拽，或从桌面直接拖拽上传
+                </p>
+              </div>
+            )}
 
-                      <td className="py-2.5 px-4 text-slate-400">
-                        {isDir ? '-' : formatBytes(item.size)}
-                      </td>
-
-                      <td className="py-2.5 px-4 text-slate-400 text-[11px]">
-                        {item.modeStr || formatPermissions(item.permissions)}
-                      </td>
-
-                      <td className="py-2.5 px-4 text-slate-400 text-[11px]">
-                        {formatDate(item.modifyTime)}
-                      </td>
-
-                      <td className="py-2.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5 opacity-40 group-hover:opacity-100 transition-opacity">
-                          {!isDir && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenFileOrDir(item);
-                              }}
-                              className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan"
-                              title="在线查看与编辑"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownload(item);
-                            }}
-                            className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400"
-                            title="下载到本地"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRename(item);
-                            }}
-                            className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-amber-400"
-                            title="重命名"
-                          >
-                            <FileCode className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(item);
-                            }}
-                            className="p-1 rounded hover:bg-rose-500/20 text-rose-400"
-                            title="删除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
+            {error ? (
+              <div className="h-64 flex flex-col items-center justify-center text-center p-6 bg-cosmo-900/30 rounded-2xl border border-dashed border-rose-500/30">
+                <p className="text-sm font-semibold text-rose-400 mb-2">连接或读取目录失败</p>
+                <p className="text-xs text-slate-500 mb-4">{error}</p>
+                <button
+                  onClick={() => loadDirectory(currentPath)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-cosmo-800 hover:bg-cosmo-700 text-slate-200"
+                >
+                  重试
+                </button>
+              </div>
+            ) : (
+              <div className="bg-cosmo-900 rounded-xl border border-cosmo-800 overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-cosmo-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-cosmo-850/60">
+                      <th className="py-2 px-3">文件名 (按住可拖拽至左侧下载)</th>
+                      <th className="py-2 px-3 w-20">大小</th>
+                      <th className="py-2 px-3 w-24">权限</th>
+                      <th className="py-2 px-3 w-28">修改时间</th>
+                      <th className="py-2 px-3 w-32 text-right">操作</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody className="divide-y divide-cosmo-800/60 text-xs text-slate-300 font-mono">
+                    {files.length === 0 && !loading && (
+                      <tr>
+                        <td colSpan={5} className="py-10 text-center text-slate-500 font-sans text-xs">
+                          空目录（可从左侧或桌面拖拽文件到此处上传）
+                        </td>
+                      </tr>
+                    )}
+                    {files.map((item) => {
+                      const isDir = item.type === 'd';
+                      return (
+                        <tr
+                          key={item.name}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+                            // 1. Set payload for dropping onto LocalFilePane (WinSCP mode)
+                            e.dataTransfer.setData(
+                              'application/cosmossh-remote-item',
+                              JSON.stringify({
+                                name: item.name,
+                                remotePath,
+                                isDir,
+                              })
+                            );
+                            e.dataTransfer.effectAllowed = 'copy';
+
+                            // 2. Also invoke native drag-out for OS desktop if non-dir
+                            if (!isDir && selectedHost) {
+                              window.cosmossh.sftp.startDrag({
+                                sessionId,
+                                hostConfig: selectedHost,
+                                remotePath,
+                                filename: item.name,
+                              });
+                            }
+                          }}
+                          onDragOver={(e) => {
+                            if (isDir) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              e.dataTransfer.dropEffect = 'copy';
+                            }
+                          }}
+                          onDrop={async (e) => {
+                            if (isDir) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setIsDraggingOver(false);
+                              dragCounter.current = 0;
+                              const targetDir = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+
+                              // Drop from local pane
+                              const localDataStr = e.dataTransfer.getData('application/cosmossh-local-item');
+                              if (localDataStr) {
+                                try {
+                                  const localItem = JSON.parse(localDataStr);
+                                  if (localItem.fullPath) {
+                                    await uploadLocalFiles([localItem.fullPath], targetDir);
+                                    return;
+                                  }
+                                } catch (err) {}
+                              }
+
+                              // Drop from desktop
+                              const fileList = Array.from(e.dataTransfer.files);
+                              const localPaths = fileList.map((f) => window.cosmossh.getPathForFile(f)).filter(Boolean);
+                              if (localPaths.length > 0) {
+                                await uploadLocalFiles(localPaths, targetDir);
+                              }
+                            }
+                          }}
+                          onDoubleClick={() => handleOpenFileOrDir(item)}
+                          className={`hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none ${
+                            !isDir ? 'hover:text-slate-100 cursor-grab active:cursor-grabbing' : ''
+                          }`}
+                          title={
+                            !isDir
+                              ? '按住拖动可直接拉到左侧本地目录下载，或点击右侧按钮快速下载至桌面'
+                              : '双击进入目录，支持将左侧文件拖拽至此文件夹上传'
+                          }
+                        >
+                          <td className="py-2 px-3 flex items-center gap-2">
+                            {isDir ? (
+                              <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+                            ) : (
+                              <File className="w-4 h-4 text-cosmo-cyan shrink-0" />
+                            )}
+                            <span className={`truncate max-w-[200px] ${isDir ? 'font-semibold text-slate-100' : 'text-slate-300'}`}>
+                              {item.name}
+                            </span>
+                          </td>
+
+                          <td className="py-2 px-3 text-slate-400 text-[11px]">
+                            {isDir ? '-' : formatBytes(item.size)}
+                          </td>
+
+                          <td className="py-2 px-3 text-slate-400 text-[10px]">
+                            {item.modeStr || formatPermissions(item.permissions)}
+                          </td>
+
+                          <td className="py-2 px-3 text-slate-400 text-[10px]">
+                            {formatDate(item.modifyTime)}
+                          </td>
+
+                          <td className="py-2 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-30 group-hover:opacity-100 transition-opacity">
+                              {!isDir && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleQuickDownloadToDesktop(item);
+                                    }}
+                                    className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400"
+                                    title="📥 一键快速下载到桌面"
+                                  >
+                                    <Monitor className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenFileOrDir(item);
+                                    }}
+                                    className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan"
+                                    title="在线查看与编辑"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownload(item);
+                                }}
+                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400"
+                                title="选择目录下载"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRename(item);
+                                }}
+                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-amber-400"
+                                title="重命名"
+                              >
+                                <FileCode className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(item);
+                                }}
+                                className="p-1 rounded hover:bg-rose-500/20 text-rose-400"
+                                title="删除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Remote File Editor Modal */}

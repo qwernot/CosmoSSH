@@ -53,7 +53,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onOpenUpdater();
         }
       } else {
-        setCheckUpdateResult(`当前已是最新版本 (v1.0.1)`);
+        setCheckUpdateResult(`当前已是最新版本 (v1.0.2)`);
       }
     } catch (e: any) {
       setCheckUpdateResult(`检查更新失败: ${e.message}`);
@@ -231,7 +231,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
               <RefreshCw className={`w-4 h-4 text-cosmo-cyan ${checkingUpdate ? 'animate-spin' : ''}`} /> 软件更新与升级通道
             </h3>
-            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.1</span>
+            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.2</span>
           </div>
           <p className="text-xs text-slate-400">
             CosmoSSH 支持在软件内一键直接下载最新安装包升级，或直接前往 GitHub Releases 官方仓库页面下载。
@@ -259,6 +259,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> {checkUpdateResult}
               </span>
             )}
+          </div>
+        </div>
+
+        {/* Windows Defender SmartScreen Risk Mitigation FAQ */}
+        <div className="bg-cosmo-900 border border-cosmo-800 rounded-2xl p-6 space-y-3">
+          <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-amber-400" /> Windows 提示「已保护你的电脑 / 发现风险」常见说明
+          </h3>
+          <div className="text-xs text-slate-400 space-y-2 leading-relaxed">
+            <p>
+              💡 <strong className="text-slate-200">为什么 Windows 会提示？</strong>
+              开源免费软件通常未购买每年高达数百美元的微软商业 EV 数字签名证书。Windows Defender SmartScreen 会对从网络下载的新发布的未签名可执行文件弹出该提示。这是正常现象。
+            </p>
+            <div className="bg-cosmo-950 p-3 rounded-xl border border-cosmo-800 space-y-1 font-mono text-[11px] text-slate-300">
+              <p className="text-emerald-400 font-bold">✅ 解决方法（只需一次）：</p>
+              <p>方法一：在弹出的「Windows 已保护你的电脑」窗口中，点击 <span className="text-cosmo-cyan font-semibold">“更多信息 (More info)”</span> ➔ 点击出现的 <span className="text-cosmo-cyan font-semibold">“仍要运行 (Run anyway)”</span> 即可正常打开。</p>
+              <p>方法二：右键点击解压出的 <span className="text-slate-200">CosmoSSH.exe</span> ➔ 选择 <span className="text-cosmo-cyan font-semibold">“属性”</span> ➔ 勾选最下方的 <span className="text-cosmo-cyan font-semibold">“解除锁定 (Unblock)”</span> ➔ 点击确定即可彻底消除提示。</p>
+            </div>
           </div>
         </div>
 
@@ -292,13 +310,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 CosmoSSH 终端
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cosmo-cyan/10 text-cosmo-cyan border border-cosmo-cyan/30">
-                  v1.0.1
+                  v1.0.2
                 </span>
               </h4>
               <p className="text-xs text-slate-400">
                 专为极客与运维工程师打造的轻量级 SSH & SFTP 终端客户端
               </p>
-              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.1 (Linux deb / Windows Portable)</p>
+              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.2 (Linux deb / Windows Portable)</p>
             </div>
           </div>
 

@@ -11,23 +11,29 @@ CosmoSSH 是专为运维、开发者和极客打造的新一代轻量级、高�
 - **官方 Releases 发布页**：[https://github.com/qwernot/CosmoSSH/releases](https://github.com/qwernot/CosmoSSH/releases)
 - **作者个人主页**：[https://666228.xyz](https://666228.xyz)
 
-| 平台 | 最新安装包 (v1.0.1) | 格式 | 说明 |
+| 平台 | 最新安装包 (v1.0.2) | 格式 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **Windows 64位 (标准包)** | [CosmoSSH-1.0.1-win.zip](https://github.com/qwernot/CosmoSSH/releases) | `.zip` 便携压缩包 | 解压后双击 `CosmoSSH.exe` 即可直接使用 |
-| **Windows 64位 (极小体积)** | [CosmoSSH-1.0.1-win.7z](https://github.com/qwernot/CosmoSSH/releases) | `.7z` 高压缩包 | 7z 高压缩绿色版 |
-| **Linux (Debian/Ubuntu)** | [cosmossh_1.0.1_amd64.deb](https://github.com/qwernot/CosmoSSH/releases) | `.deb` 标准包 | `sudo dpkg -i cosmossh_1.0.1_amd64.deb` |
+| **Windows 64位 (标准包)** | [CosmoSSH-1.0.2-win.zip](https://github.com/qwernot/CosmoSSH/releases) | `.zip` 便携压缩包 | 解压后双击 `CosmoSSH.exe` 即可直接使用 |
+| **Windows 64位 (极小体积)** | [CosmoSSH-1.0.2-win.7z](https://github.com/qwernot/CosmoSSH/releases) | `.7z` 高压缩包 | 7z 高压缩绿色版 |
+| **Linux (Debian/Ubuntu)** | [cosmossh_1.0.2_amd64.deb](https://github.com/qwernot/CosmoSSH/releases) | `.deb` 标准包 | `sudo dpkg -i cosmossh_1.0.2_amd64.deb` |
+
+> 💡 **Windows 打开提示「Windows 已保护你的电脑 / 存在风险」的解决方法**：  
+> CosmoSSH 为个人开源项目，未购买每年昂贵的商业 EV 代码签名证书。若 Windows 弹出安全警告：点击弹窗中的「**更多信息 (More info)**」➔ 点击「**仍要运行 (Run anyway)**」即可（仅需首次操作）。或右键解压后的 `CosmoSSH.exe` ➔ 选择「属性」➔ 勾选最下方的「**解除锁定 (Unblock)**」确定即可。
 
 ---
 
-## 核心特性 (v1.0.1)
+## 核心特性 (v1.0.2)
 
+- 📂 **WinSCP 风格双栏文件传输 (双向来回拖拽)**：
+  - **左栏本地电脑**：内置本地资源管理器，支持一键快捷跳转「桌面」、「下载」和「家目录」，可新建本地文件夹与在系统文件管理器中直接打开。
+  - **右栏远程服务器**：全功能 SFTP 远程文件浏览、在线编辑、权限查看与快速管理。
+  - **来回拖拽极速传输**：直接从左栏拖拽文件到右栏即可立即上传；从右栏拖拽文件到左栏即可立即下载到当前本地目录！
+  - **一键下载到桌面**：远程文件提供「📥 一键下载到桌面」快捷按钮，无需任何文件选择弹窗，点击即下。
+  - **双栏/单栏自由切换**：点击顶部「WinSCP 双栏模式」按钮，可一键切换全宽单栏或双栏对比视图。
 - ⌨️ **极客终端快捷键支持**：
   - 智能 `Ctrl+C`：当选中文本时复制到系统剪贴板，未选中时放行 SIGINT 中断信号。
   - `Ctrl+V` 一键粘贴系统剪贴板内容到当前会话。
   - 鼠标右键智能复制/粘贴。
-- 📂 **SFTP 双向拖拽传输 (WinSCP 交互体验)**：
-  - **外部拖入**：桌面或本地文件/文件夹直接拖拽进 SFTP 窗口立即上传至当前远程目录（支持目录递归上传）。
-  - **拖出到外部**：直接将 SFTP 列表中的文件拖出到操作系统桌面或文件夹完成下载。
 - 🔄 **版本更新通道 (逢十进一)**：
   - 内置软件内一键检查更新，可直接在软件内下载最新安装包或跳转至仓库页面更新。
 - 🌐 **作者主页与极客工具集**：
@@ -63,8 +69,8 @@ CosmoSSH 是专为运维、开发者和极客打造的新一代轻量级、高�
 │   ├── wrangler.toml           # Wrangler 部署配置
 │   └── README.md               # 2分钟部署操作手册
 ├── release/                    # 构建生成的发布安装包
-│   ├── cosmossh_1.0.0_amd64.deb # Linux deb 安装包 (已生成)
-│   └── CosmoSSH-1.0.0-win.7z   # Windows 64位运行包 (已生成，解压即用)
+│   ├── cosmossh_1.0.2_amd64.deb # Linux deb 安装包 (已生成)
+│   └── CosmoSSH-1.0.2-win.7z   # Windows 64位运行包 (已生成，解压即用)
 ├── src/
 │   ├── main/                   # Electron 主进程 (SSH2, SFTP, IPC, 加密存储)
 │   ├── preload/                # 安全预加载脚本 (ContextBridge)
