@@ -84,3 +84,19 @@ export interface AppDataPayload {
   snippets: CommandSnippet[];
   settings: AppSettings;
 }
+
+export interface UpdateReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number;
+}
+
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  releaseNotes: string;
+  publishedAt: string;
+  releaseUrl: string;
+  assets: UpdateReleaseAsset[];
+}

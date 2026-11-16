@@ -9,18 +9,24 @@ import {
   Layers
 } from 'lucide-react';
 
+import { UpdateInfo } from '@shared/types';
+
 export type NavTab = 'hosts' | 'terminal' | 'sftp' | 'sync' | 'settings';
 
 interface SidebarProps {
   currentTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   activeSessionCount: number;
+  updateInfo?: UpdateInfo | null;
+  onOpenUpdater?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
   onSelectTab,
   activeSessionCount,
+  updateInfo,
+  onOpenUpdater,
 }) => {
   const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     {
@@ -91,11 +97,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom Status Card */}
-      <div className="p-4 border-t border-cosmo-800/60">
+      <div className="p-4 border-t border-cosmo-800/60 space-y-2">
+        {updateInfo?.hasUpdate && (
+          <button
+            onClick={onOpenUpdater}
+            className="w-full py-1.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/20 to-cosmo-cyan/20 border border-amber-500/40 text-amber-300 text-[11px] font-bold flex items-center justify-between shadow-glow-cyan/10 animate-pulse hover:brightness-110 cursor-pointer"
+          >
+            <span>🔥 发现新版 v{updateInfo.latestVersion}</span>
+            <span className="text-[10px] underline">去更新</span>
+          </button>
+        )}
+
         <div className="p-3 rounded-xl bg-cosmo-950/60 border border-cosmo-800 text-xs text-slate-400 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span className="text-slate-300 font-mono">v1.0.0</span>
+            <span className="text-slate-300 font-mono">v1.0.1</span>
           </div>
           <span className="text-[11px] text-cosmo-500 font-mono">E2EE Ready</span>
         </div>

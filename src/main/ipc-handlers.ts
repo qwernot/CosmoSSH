@@ -1,9 +1,10 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, shell, clipboard, app, nativeImage } from 'electron';
 import { AppStore } from './store';
 import { SSHService } from './ssh-service';
 import { SFTPService } from './sftp-service';
-import { HostConfig, CloudSyncConfig, AppDataPayload } from '../shared/types';
+import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo } from '../shared/types';
 import fs from 'fs';
+import path from 'path';
 import net from 'net';
 import { exec } from 'child_process';
 
@@ -368,5 +369,146 @@ export function registerIpcHandlers(
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.send('window:maximizedChange', false);
     }
+  });
+
+  // Clipboard
+  ipcMain.handle('clipboard:readText', () => {
+    return clipboard.readText();
+  });
+
+  ipcMain.handle('clipboard:writeText', (_event, text: string) => {
+    clipboard.writeText(text);
+    return true;
+  });
+
+  // Shell open external link
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+      await shell.openExternal(url);
+    }
+  });
+
+  // SFTP Native Drag Out (Download to temp and call event.sender.startDrag)
+  ipcMain.on('sftp:startDrag', async (event, { sessionId, hostConfig, remotePath, filename }) => {
+    try {
+      const dragCacheDir = path.join(app.getPath('temp'), 'cosmossh-drag-cache');
+      if (!fs.existsSync(dragCacheDir)) {
+        fs.mkdirSync(dragCacheDir, { recursive: true });
+      }
+      const localFilePath = path.join(dragCacheDir, filename);
+
+      // Download file to temp directory
+      await sftpService.download(sessionId, hostConfig, remotePath, localFilePath);
+
+      if (fs.existsSync(localFilePath)) {
+        const iconPath = path.join(__dirname, '../../assets/icon.png');
+        event.sender.startDrag({
+          file: localFilePath,
+          icon: fs.existsSync(iconPath) ? iconPath : nativeImage.createEmpty(),
+        });
+      }
+    } catch (err) {
+      console.error('SFTP startDrag error:', err);
+    }
+  });
+
+  // Updater: Check for updates via GitHub Releases
+  function compareVersions(latest: string, current: string): boolean {
+    const l = latest.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
+    const c = current.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(l.length, c.length); i++) {
+      const lPart = l[i] || 0;
+      const cPart = c[i] || 0;
+      if (lPart > cPart) return true;
+      if (lPart < cPart) return false;
+    }
+    return false;
+  }
+
+  ipcMain.handle('updater:checkUpdate', async (): Promise<UpdateInfo> => {
+    const currentVersion = '1.0.1';
+    try {
+      const res = await fetch('https://api.github.com/repos/qwernot/CosmoSSH/releases/latest', {
+        headers: { 'User-Agent': 'CosmoSSH-Client' },
+      });
+      if (!res.ok) {
+        throw new Error(`GitHub API HTTP ${res.status}`);
+      }
+      const data: any = await res.json();
+      const latestTag = data.tag_name || '';
+      const hasUpdate = compareVersions(latestTag, currentVersion);
+
+      const assets = Array.isArray(data.assets)
+        ? data.assets.map((a: any) => ({
+            name: a.name,
+            browser_download_url: a.browser_download_url,
+            size: a.size,
+          }))
+        : [];
+
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion: latestTag.replace(/^v/i, ''),
+        releaseNotes: data.body || '无更新说明',
+        publishedAt: data.published_at || '',
+        releaseUrl: data.html_url || 'https://github.com/qwernot/CosmoSSH/releases',
+        assets,
+      };
+    } catch (err: any) {
+      return {
+        hasUpdate: false,
+        currentVersion,
+        latestVersion: currentVersion,
+        releaseNotes: '',
+        publishedAt: '',
+        releaseUrl: 'https://github.com/qwernot/CosmoSSH/releases',
+        assets: [],
+      };
+    }
+  });
+
+  ipcMain.handle('updater:downloadUpdate', async (_event, { url, filename }: { url: string; filename: string }) => {
+    try {
+      const downloadsDir = app.getPath('downloads');
+      const targetPath = path.join(downloadsDir, filename);
+
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'CosmoSSH-Client' },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const total = Number(response.headers.get('content-length')) || 0;
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('无法读取下载数据流');
+
+      const fileStream = fs.createWriteStream(targetPath);
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          fileStream.write(Buffer.from(value));
+          received += value.length;
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:downloadProgress', {
+              received,
+              total,
+              percent: total > 0 ? Math.round((received / total) * 100) : 0,
+            });
+          }
+        }
+      }
+      fileStream.end();
+
+      return { success: true, filePath: targetPath };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('updater:showInFolder', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath);
   });
 }

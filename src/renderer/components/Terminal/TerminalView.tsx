@@ -115,7 +115,81 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
 
+    // Smart Copy & Paste Keybindings (Ctrl+C / Ctrl+V / Cmd+C / Cmd+V)
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      const isCtrlOrCmd = (event.ctrlKey || event.metaKey) && !event.altKey;
+      if (!isCtrlOrCmd) return true;
+
+      // Handle Ctrl+C (Copy if text is selected, otherwise send SIGINT \x03)
+      if (event.code === 'KeyC' || event.key === 'c' || event.key === 'C') {
+        if (event.type === 'keydown') {
+          if (term.hasSelection()) {
+            const selection = term.getSelection();
+            if (selection) {
+              navigator.clipboard.writeText(selection).catch(() => {
+                window.cosmossh.clipboard.writeText(selection);
+              });
+            }
+            return false; // Prevent xterm from sending \x03 when copying
+          }
+        }
+        return true; // No selection -> let SIGINT pass through
+      }
+
+      // Handle Ctrl+V (Paste from OS clipboard)
+      if (event.code === 'KeyV' || event.key === 'v' || event.key === 'V') {
+        if (event.type === 'keydown') {
+          (async () => {
+            try {
+              let text = await navigator.clipboard.readText();
+              if (!text) {
+                text = await window.cosmossh.clipboard.readText();
+              }
+              if (text) {
+                window.cosmossh.ssh.write(sessionId, text);
+              }
+            } catch {
+              const text = await window.cosmossh.clipboard.readText();
+              if (text) {
+                window.cosmossh.ssh.write(sessionId, text);
+              }
+            }
+          })();
+        }
+        return false; // Prevent xterm from sending \x16
+      }
+
+      return true;
+    });
+
     term.open(el);
+
+    // Right-click: Copy if selection, otherwise paste
+    const handleContextMenu = async (e: MouseEvent) => {
+      e.preventDefault();
+      if (term.hasSelection()) {
+        const text = term.getSelection();
+        if (text) {
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch {
+            await window.cosmossh.clipboard.writeText(text);
+          }
+        }
+      } else {
+        try {
+          let text = await navigator.clipboard.readText();
+          if (!text) text = await window.cosmossh.clipboard.readText();
+          if (text) {
+            window.cosmossh.ssh.write(sessionId, text);
+          }
+        } catch {
+          const text = await window.cosmossh.clipboard.readText();
+          if (text) window.cosmossh.ssh.write(sessionId, text);
+        }
+      }
+    };
+    el.addEventListener('contextmenu', handleContextMenu);
 
     // Keystroke forwarding to backend
     term.onData((data) => {
@@ -130,7 +204,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     terminalMap.current.set(sessionId, {
       term,
       fit: fitAddon,
-      cleanupData,
+      cleanupData: () => {
+        cleanupData();
+        el.removeEventListener('contextmenu', handleContextMenu);
+      },
       element: el,
     });
 

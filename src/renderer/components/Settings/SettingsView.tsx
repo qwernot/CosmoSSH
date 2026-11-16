@@ -8,15 +8,20 @@ import {
   Sparkles, 
   Shield, 
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Globe,
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
-import { AppSettings, AppDataPayload } from '@shared/types';
+import { AppSettings, AppDataPayload, UpdateInfo } from '@shared/types';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onSaveSettings: (settings: AppSettings) => void;
   appData: AppDataPayload;
   onImportData: (data: AppDataPayload) => void;
+  onOpenUpdater?: () => void;
+  updateInfo?: UpdateInfo | null;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -24,12 +29,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSaveSettings,
   appData,
   onImportData,
+  onOpenUpdater,
+  updateInfo,
 }) => {
   const [fontSize, setFontSize] = useState(settings.fontSize || 14);
   const [fontFamily, setFontFamily] = useState(settings.fontFamily || "'JetBrains Mono', monospace");
   const [cursorBlink, setCursorBlink] = useState(settings.cursorBlink ?? true);
   const [scrollback, setScrollback] = useState(settings.scrollback || 5000);
   const [savedNotice, setSavedNotice] = useState(false);
+
+  // Update check state
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [checkUpdateResult, setCheckUpdateResult] = useState<string | null>(null);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setCheckUpdateResult(null);
+    try {
+      const res = await window.cosmossh.updater.checkUpdate();
+      if (res.hasUpdate) {
+        setCheckUpdateResult(`发现新版本 v${res.latestVersion}！`);
+        if (onOpenUpdater) {
+          onOpenUpdater();
+        }
+      } else {
+        setCheckUpdateResult(`当前已是最新版本 (v1.0.1)`);
+      }
+    } catch (e: any) {
+      setCheckUpdateResult(`检查更新失败: ${e.message}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const handleSave = () => {
     onSaveSettings({
@@ -194,6 +225,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
+        {/* Version Updates & Upgrade */}
+        <div className="bg-cosmo-900 border border-cosmo-800 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <RefreshCw className={`w-4 h-4 text-cosmo-cyan ${checkingUpdate ? 'animate-spin' : ''}`} /> 软件更新与升级通道
+            </h3>
+            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.1</span>
+          </div>
+          <p className="text-xs text-slate-400">
+            CosmoSSH 支持在软件内一键直接下载最新安装包升级，或直接前往 GitHub Releases 官方仓库页面下载。
+          </p>
+
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <button
+              disabled={checkingUpdate}
+              onClick={handleCheckUpdate}
+              className="px-4 py-2 rounded-xl bg-cosmo-800 hover:bg-cosmo-700 text-xs font-semibold text-slate-200 flex items-center gap-2 border border-cosmo-700 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cosmo-cyan ${checkingUpdate ? 'animate-spin' : ''}`} />
+              {checkingUpdate ? '正在检查最新版本...' : '🔍 检查更新'}
+            </button>
+
+            <button
+              onClick={() => window.cosmossh.shell.openExternal('https://github.com/qwernot/CosmoSSH/releases')}
+              className="px-4 py-2 rounded-xl bg-cosmo-850 hover:bg-cosmo-750 text-xs font-medium text-slate-300 flex items-center gap-2 border border-cosmo-750 transition-colors cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-slate-400" /> 前往官方 Releases 仓库更新
+            </button>
+
+            {checkUpdateResult && (
+              <span className="text-xs font-mono text-cosmo-cyan bg-cosmo-950 px-3 py-1.5 rounded-lg border border-cosmo-800 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> {checkUpdateResult}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Author Homepage (666228.xyz) */}
+        <div className="bg-cosmo-900 border border-cosmo-800 rounded-2xl p-6 space-y-4">
+          <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <Globe className="w-4 h-4 text-cosmo-cyan" /> 作者主页与官方动态
+          </h3>
+          <p className="text-xs text-slate-400">
+            欢迎访问作者主页，获取 CosmoSSH 的最新版本发布、更新日志及开源运维工具集。
+          </p>
+
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <button
+              onClick={() => window.cosmossh.shell.openExternal('https://666228.xyz')}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cosmo-accent/20 to-cosmo-cyan/20 hover:from-cosmo-accent/30 hover:to-cosmo-cyan/30 text-xs font-semibold text-cosmo-cyan flex items-center gap-2 border border-cosmo-cyan/40 shadow-glow-cyan/10 transition-all hover:brightness-110 cursor-pointer"
+            >
+              <Globe className="w-4 h-4" /> 作者主页: 666228.xyz
+              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+            </button>
+          </div>
+        </div>
+
         {/* About App */}
         <div className="bg-cosmo-900 border border-cosmo-800 rounded-2xl p-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -201,13 +289,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Sparkles className="w-6 h-6" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-100">CosmoSSH 终端</h4>
+              <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                CosmoSSH 终端
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cosmo-cyan/10 text-cosmo-cyan border border-cosmo-cyan/30">
+                  v1.0.1
+                </span>
+              </h4>
               <p className="text-xs text-slate-400">
                 专为极客与运维工程师打造的轻量级 SSH & SFTP 终端客户端
               </p>
-              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.0 (Linux deb / Windows)</p>
+              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.1 (Linux deb / Windows Portable)</p>
             </div>
           </div>
+
+          <button
+            onClick={() => window.cosmossh.shell.openExternal('https://666228.xyz')}
+            className="px-3.5 py-1.5 rounded-xl bg-cosmo-800 hover:bg-cosmo-700 text-xs font-medium text-slate-300 hover:text-cosmo-cyan flex items-center gap-1.5 border border-cosmo-700 transition-colors cursor-pointer"
+          >
+            <Globe className="w-3.5 h-3.5" /> 666228.xyz
+          </button>
         </div>
       </div>
     </div>

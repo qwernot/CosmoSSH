@@ -1,6 +1,6 @@
 {
   "name": "cosmossh",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Next-generation SSH Terminal, SFTP Client & Host Manager with Cloudflare E2EE Sync",
   "homepage": "https://github.com/cosmossh/cosmossh",
   "main": "dist-electron/main/index.js",

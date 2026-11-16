@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import { HostConfig, CloudSyncConfig, AppDataPayload } from '../shared/types';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo } from '../shared/types';
 
 export const api = {
   // Store
@@ -140,6 +140,37 @@ export const api = {
       mode: number
     ) =>
       ipcRenderer.invoke('sftp:chmod', { sessionId, hostConfig, remotePath, mode }),
+    startDrag: (data: {
+      sessionId: string;
+      hostConfig: HostConfig;
+      remotePath: string;
+      filename: string;
+    }) => {
+      ipcRenderer.send('sftp:startDrag', data);
+    },
+  },
+
+  // File Path from Drop Event (Electron webUtils)
+  getPathForFile: (file: File): string => {
+    try {
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        return webUtils.getPathForFile(file);
+      }
+    } catch (e) {
+      // fallback
+    }
+    return (file as any).path || '';
+  },
+
+  // Clipboard
+  clipboard: {
+    readText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
+    writeText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:writeText', text),
+  },
+
+  // Shell (open external links in default browser)
+  shell: {
+    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
   },
 
   // Dialogs
@@ -167,6 +198,20 @@ export const api = {
   network: {
     pingHost: (host: string, port: number): Promise<{ success: boolean; latency?: number; error?: string; timeout?: boolean }> =>
       ipcRenderer.invoke('network:pingHost', { host, port }),
+  },
+
+  // Updater
+  updater: {
+    checkUpdate: (): Promise<UpdateInfo> => ipcRenderer.invoke('updater:checkUpdate'),
+    downloadUpdate: (url: string, filename: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+      ipcRenderer.invoke('updater:downloadUpdate', { url, filename }),
+    onDownloadProgress: (callback: (progress: { received: number; total: number; percent: number }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('updater:downloadProgress', handler);
+      return () => ipcRenderer.removeListener('updater:downloadProgress', handler);
+    },
+    showInFolder: (filePath: string): Promise<void> =>
+      ipcRenderer.invoke('updater:showInFolder', filePath),
   },
 };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FolderSync, 
   Folder, 
@@ -37,6 +37,10 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const [files, setFiles] = useState<SFTPFileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Drag & Drop State (Desktop Drag-in & Drag-out)
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounter = useRef(0);
 
   // Editor Modal
   const [editingFile, setEditingFile] = useState<{ path: string; content: string } | null>(null);
@@ -127,14 +131,12 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     loadDirectory(currentPath);
   };
 
-  const handleUpload = async () => {
-    if (!selectedHost) return;
-    const filePaths = await window.cosmossh.dialog.selectUploadFiles();
-    if (!filePaths || filePaths.length === 0) return;
+  const uploadLocalFiles = async (filePaths: string[], targetDirPath: string = currentPath) => {
+    if (!selectedHost || !filePaths || filePaths.length === 0) return;
 
     for (const localPath of filePaths) {
       const filename = localPath.split(/[\/\\]/).pop() || 'upload';
-      const remotePath = currentPath === '/' ? `/${filename}` : `${currentPath}/${filename}`;
+      const remotePath = targetDirPath === '/' ? `/${filename}` : `${targetDirPath}/${filename}`;
       const transferId = `trans_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
       const newItem: TransferQueueItem = {
@@ -143,7 +145,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
         localPath,
         remotePath,
         filename,
-        totalSize: 100, // will update
+        totalSize: 100,
         transferredSize: 0,
         status: 'transferring',
       };
@@ -175,6 +177,63 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: err.message } : t))
         );
       }
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedHost) return;
+    const filePaths = await window.cosmossh.dialog.selectUploadFiles();
+    if (filePaths && filePaths.length > 0) {
+      await uploadLocalFiles(filePaths, currentPath);
+    }
+  };
+
+  // Drag & Drop Handlers (Drag from Desktop/File Manager into SFTP)
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDraggingOver(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDraggingOver(false);
+
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+
+    const fileList = Array.from(e.dataTransfer.files);
+    const localPaths: string[] = [];
+
+    for (const file of fileList) {
+      const p = window.cosmossh.getPathForFile(file);
+      if (p) {
+        localPaths.push(p);
+      }
+    }
+
+    if (localPaths.length > 0) {
+      await uploadLocalFiles(localPaths, currentPath);
     }
   };
 
@@ -406,7 +465,29 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       </div>
 
       {/* File List Table */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div 
+        className="flex-1 overflow-y-auto p-4 relative"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag & Drop Visual Overlay */}
+        {isDraggingOver && (
+          <div className="absolute inset-4 bg-cosmo-950/90 backdrop-blur-md border-2 border-dashed border-cosmo-cyan rounded-2xl flex flex-col items-center justify-center z-40 pointer-events-none shadow-glow-cyan/20 animate-in fade-in duration-150">
+            <div className="w-16 h-16 rounded-2xl bg-cosmo-900 border border-cosmo-cyan/40 flex items-center justify-center text-cosmo-cyan shadow-glow-cyan/30 shadow-lg mb-3">
+              <Upload className="w-8 h-8 animate-bounce text-cosmo-cyan" />
+            </div>
+            <h3 className="text-base font-bold text-slate-100">松开鼠标立即上传至此目录</h3>
+            <p className="text-xs text-cosmo-cyan font-mono mt-1.5 px-3 py-1 bg-cosmo-900/80 rounded-lg border border-cosmo-800">
+              {currentPath}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-2">
+              ✨ 支持多文件与文件夹批量拖拽上传 (WinSCP 交互)
+            </p>
+          </div>
+        )}
+
         {error ? (
           <div className="h-64 flex flex-col items-center justify-center text-center p-6 bg-cosmo-900/30 rounded-2xl border border-dashed border-rose-500/30">
             <p className="text-sm font-semibold text-rose-400 mb-2">连接或读取目录失败</p>
@@ -423,7 +504,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-cosmo-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider bg-cosmo-850/60">
-                  <th className="py-3 px-4">文件名</th>
+                  <th className="py-3 px-4">文件名 (支持拖到桌面下载 / 拖入上传)</th>
                   <th className="py-3 px-4 w-28">大小</th>
                   <th className="py-3 px-4 w-32">权限</th>
                   <th className="py-3 px-4 w-44">修改时间</th>
@@ -434,7 +515,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                 {files.length === 0 && !loading && (
                   <tr>
                     <td colSpan={5} className="py-12 text-center text-slate-500 font-sans">
-                      空目录
+                      空目录（可直接从桌面拖拽文件到此处上传）
                     </td>
                   </tr>
                 )}
@@ -443,8 +524,51 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                   return (
                     <tr
                       key={item.name}
+                      draggable={!isDir}
+                      onDragStart={(e) => {
+                        if (isDir) return;
+                        // Prevent default browser link/image drag and initiate native Electron drag-out
+                        e.preventDefault();
+                        if (selectedHost) {
+                          const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+                          window.cosmossh.sftp.startDrag({
+                            sessionId,
+                            hostConfig: selectedHost,
+                            remotePath,
+                            filename: item.name,
+                          });
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        if (isDir) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'copy';
+                        }
+                      }}
+                      onDrop={async (e) => {
+                        if (isDir) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setIsDraggingOver(false);
+                          dragCounter.current = 0;
+                          const targetDir = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+                          const fileList = Array.from(e.dataTransfer.files);
+                          const localPaths = fileList.map((f) => window.cosmossh.getPathForFile(f)).filter(Boolean);
+                          if (localPaths.length > 0) {
+                            await uploadLocalFiles(localPaths, targetDir);
+                          }
+                        }
+                      }}
                       onDoubleClick={() => handleOpenFileOrDir(item)}
-                      className="hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none"
+                      className={`hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none ${
+                        !isDir ? 'hover:text-slate-100 cursor-grab active:cursor-grabbing' : ''
+                      }`}
+                      title={
+                        !isDir
+                          ? '按住拖动可直接下载至本地桌面/文件夹，双击可在线编辑'
+                          : '双击进入目录，支持将本地文件拖拽至此文件夹上传'
+                      }
                     >
                       <td className="py-2.5 px-4 flex items-center gap-2.5">
                         {isDir ? (

@@ -6,12 +6,13 @@ import { TerminalView, TerminalSession } from './components/Terminal/TerminalVie
 import { SFTPView } from './components/SFTP/SFTPView';
 import { SyncView } from './components/CloudSync/SyncView';
 import { SettingsView } from './components/Settings/SettingsView';
-import { AppDataPayload, CloudSyncConfig, HostConfig, HostGroup, AppSettings } from '@shared/types';
+import { UpdateModal } from './components/Updater/UpdateModal';
+import { AppDataPayload, CloudSyncConfig, HostConfig, HostGroup, AppSettings, UpdateInfo } from '@shared/types';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('hosts');
   const [appData, setAppData] = useState<AppDataPayload>({
-    version: '1.0.0',
+    version: '1.0.1',
     updatedAt: Date.now(),
     hosts: [],
     groups: [],
@@ -35,6 +36,10 @@ export const App: React.FC = () => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sftpTargetHost, setSftpTargetHost] = useState<HostConfig | null>(null);
 
+  // Updater State
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+
   // Load initial store data
   useEffect(() => {
     async function init() {
@@ -52,6 +57,20 @@ export const App: React.FC = () => {
       }
     }
     init();
+
+    // Quietly check for updates in background
+    const timer = setTimeout(async () => {
+      try {
+        const info = await window.cosmossh.updater.checkUpdate();
+        if (info && info.hasUpdate) {
+          setUpdateInfo(info);
+        }
+      } catch (e) {
+        // ignore network error
+      }
+    }, 2500);
+
+    return () => clearTimeout(timer);
   }, []);
 
   // SSH Actions
@@ -176,6 +195,8 @@ export const App: React.FC = () => {
           currentTab={currentTab}
           onSelectTab={setCurrentTab}
           activeSessionCount={sessions.filter((s) => s.connected).length}
+          updateInfo={updateInfo}
+          onOpenUpdater={() => setIsUpdateModalOpen(true)}
         />
 
         {/* Main Content Area */}
@@ -230,10 +251,19 @@ export const App: React.FC = () => {
               onSaveSettings={handleSaveSettings}
               appData={appData}
               onImportData={handleUpdateAppData}
+              onOpenUpdater={() => setIsUpdateModalOpen(true)}
+              updateInfo={updateInfo}
             />
           </div>
         </main>
       </div>
+
+      {/* Version Updater Modal */}
+      <UpdateModal
+        isOpen={isUpdateModalOpen}
+        onClose={() => setIsUpdateModalOpen(false)}
+        updateInfo={updateInfo}
+      />
     </div>
   );
 };

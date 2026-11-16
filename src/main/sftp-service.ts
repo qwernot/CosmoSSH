@@ -180,6 +180,12 @@ export class SFTPService {
     });
   }
 
+  private async ensureRemoteDir(sftp: SFTPWrapper, remoteDir: string): Promise<void> {
+    return new Promise((resolve) => {
+      sftp.mkdir(remoteDir, () => resolve());
+    });
+  }
+
   public async upload(
     sessionId: string,
     hostConfig: HostConfig,
@@ -189,8 +195,19 @@ export class SFTPService {
   ): Promise<void> {
     const session = await this.getOrOpenSession(sessionId, hostConfig);
     const stats = fs.statSync(localPath);
-    const total = stats.size;
 
+    if (stats.isDirectory()) {
+      await this.ensureRemoteDir(session.sftp, remotePath);
+      const entries = fs.readdirSync(localPath);
+      for (const entry of entries) {
+        const subLocal = path.join(localPath, entry);
+        const subRemote = remotePath.endsWith('/') ? `${remotePath}${entry}` : `${remotePath}/${entry}`;
+        await this.upload(sessionId, hostConfig, subLocal, subRemote, onProgress);
+      }
+      return;
+    }
+
+    const total = stats.size;
     return new Promise((resolve, reject) => {
       session.sftp.fastPut(
         localPath,

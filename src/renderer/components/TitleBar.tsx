@@ -47,6 +47,9 @@ export const TitleBar: React.FC = () => {
         <span className="text-[10px] text-cosmo-500 font-mono hidden sm:inline">
           Terminal & SFTP
         </span>
+        <span className="text-[9px] px-1.5 py-0.5 font-mono text-cosmo-cyan/90 bg-cosmo-cyan/10 border border-cosmo-cyan/25 rounded-md hidden md:inline">
+          v1.0.1
+        </span>
       </div>
 
       {/* Center: Draggable Space */}
