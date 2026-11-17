@@ -15,6 +15,7 @@ import {
   Copy
 } from 'lucide-react';
 import { HostConfig, CommandSnippet, AppSettings } from '@shared/types';
+import { HostStatsBar } from './HostStatsBar';
 
 export interface TerminalSession {
   id: string;
@@ -417,9 +418,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
       {/* Terminal Toolbar */}
       {activeSession && (
-        <div className="h-9 px-4 bg-cosmo-900/40 border-b border-cosmo-800/60 flex items-center justify-between text-xs text-slate-400 shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-slate-300">
+        <div className="h-10 px-4 bg-cosmo-900/60 border-b border-cosmo-800 flex items-center justify-between text-xs text-slate-400 shrink-0 gap-3 overflow-x-auto">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="font-mono text-slate-300 font-semibold">
               {activeSession.host.username}@{activeSession.host.host}:{activeSession.host.port}
             </span>
             {activeSession.connecting && (
@@ -434,10 +435,21 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Real-time Hardware System Monitor Bar */}
+          {activeSession.connected && (
+            <div className="flex items-center shrink-0">
+              <HostStatsBar
+                sessionId={activeSession.id}
+                host={activeSession.host}
+                connected={activeSession.connected}
+              />
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => onNewSessionForHost(activeSession.host)}
-              className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-[11px] font-medium flex items-center gap-1.5 transition-colors border border-cosmo-cyan/30 shadow-sm cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-[11px] font-medium flex items-center gap-1 transition-colors border border-cosmo-cyan/30 shadow-sm cursor-pointer"
               title="为此服务器打开新的独立终端会话"
             >
               <Plus className="w-3.5 h-3.5" /> 新建会话
@@ -445,20 +457,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
             <button
               onClick={() => onOpenSFTP(activeSession.host)}
-              className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-200 text-[11px] font-medium flex items-center gap-1.5 transition-colors border border-cosmo-700 cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-200 text-[11px] font-medium flex items-center gap-1 transition-colors border border-cosmo-700 cursor-pointer"
             >
-              <FolderSync className="w-3.5 h-3.5 text-cosmo-cyan" /> SFTP 文件传输
+              <FolderSync className="w-3.5 h-3.5 text-cosmo-cyan" /> SFTP
             </button>
 
             <button
               onClick={() => setShowSnippets(!showSnippets)}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-colors border cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1 transition-colors border cursor-pointer ${
                 showSnippets
                   ? 'bg-cosmo-cyan/20 text-cosmo-cyan border-cosmo-cyan/40'
                   : 'bg-cosmo-800 hover:bg-cosmo-700 text-slate-200 border-cosmo-700'
               }`}
             >
-              <Command className="w-3.5 h-3.5" /> 常用快捷命令
+              <Command className="w-3.5 h-3.5" /> 常用命令
             </button>
 
             <button

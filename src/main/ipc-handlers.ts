@@ -3,6 +3,7 @@ import { AppStore } from './store';
 import { SSHService } from './ssh-service';
 import { SFTPService } from './sftp-service';
 import { LocalFSService } from './local-fs-service';
+import { HostMonitorService } from './host-monitor-service';
 import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo } from '../shared/types';
 import fs from 'fs';
 import path from 'path';
@@ -101,7 +102,8 @@ export function registerIpcHandlers(
   store: AppStore,
   sshService: SSHService,
   sftpService: SFTPService,
-  localFSService: LocalFSService
+  localFSService: LocalFSService,
+  hostMonitorService: HostMonitorService
 ) {
   // Network Ping Handler
   ipcMain.handle('network:pingHost', async (_event, { host, port, timeout = 3000 }) => {
@@ -164,6 +166,7 @@ export function registerIpcHandlers(
             }
           },
           (hadError) => {
+            hostMonitorService.stopMonitoring(sessionId);
             if (!mainWindow.isDestroyed()) {
               mainWindow.webContents.send(`ssh:close:${sessionId}`, hadError);
             }
@@ -190,8 +193,20 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle('ssh:disconnect', (_event, sessionId: string) => {
+    hostMonitorService.stopMonitoring(sessionId);
     sshService.disconnect(sessionId);
     sftpService.disconnect(sessionId);
+    return true;
+  });
+
+  // Host System Monitor Handlers
+  ipcMain.handle('monitor:start', (_event, sessionId: string) => {
+    hostMonitorService.startMonitoring(sessionId);
+    return true;
+  });
+
+  ipcMain.handle('monitor:stop', (_event, sessionId: string) => {
+    hostMonitorService.stopMonitoring(sessionId);
     return true;
   });
 
@@ -449,7 +464,7 @@ export function registerIpcHandlers(
   }
 
   ipcMain.handle('updater:checkUpdate', async (): Promise<UpdateInfo> => {
-    const currentVersion = '1.0.2';
+    const currentVersion = '1.0.3';
     try {
       const res = await fetch('https://api.github.com/repos/qwernot/CosmoSSH/releases/latest', {
         headers: { 'User-Agent': 'CosmoSSH-Client' },

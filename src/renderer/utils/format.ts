@@ -20,3 +20,23 @@ export function formatPermissions(mode: number): string {
   const other = perms[mode & 7];
   return `${user}${group}${other}`;
 }
+
+export function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return '0 B/s';
+  return formatBytes(bytesPerSec) + '/s';
+}
+
+export function formatUptime(seconds: number): string {
+  if (!seconds || seconds <= 0) return '-';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) {
+    return `${days}天 ${hours}小时`;
+  }
+  if (hours > 0) {
+    return `${hours}小时 ${mins}分`;
+  }
+  return `${mins}分钟`;
+}
+

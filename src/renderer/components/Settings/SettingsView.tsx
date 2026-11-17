@@ -53,7 +53,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onOpenUpdater();
         }
       } else {
-        setCheckUpdateResult(`当前已是最新版本 (v1.0.2)`);
+        setCheckUpdateResult(`当前已是最新版本 (v1.0.3)`);
       }
     } catch (e: any) {
       setCheckUpdateResult(`检查更新失败: ${e.message}`);
@@ -231,7 +231,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
               <RefreshCw className={`w-4 h-4 text-cosmo-cyan ${checkingUpdate ? 'animate-spin' : ''}`} /> 软件更新与升级通道
             </h3>
-            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.2</span>
+            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.3</span>
           </div>
           <p className="text-xs text-slate-400">
             CosmoSSH 支持在软件内一键直接下载最新安装包升级，或直接前往 GitHub Releases 官方仓库页面下载。
@@ -310,13 +310,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 CosmoSSH 终端
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cosmo-cyan/10 text-cosmo-cyan border border-cosmo-cyan/30">
-                  v1.0.2
+                  v1.0.3
                 </span>
               </h4>
               <p className="text-xs text-slate-400">
                 专为极客与运维工程师打造的轻量级 SSH & SFTP 终端客户端
               </p>
-              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.2 (Linux deb / Windows Portable)</p>
+              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.3 (Linux deb / Windows Portable)</p>
             </div>
           </div>
 

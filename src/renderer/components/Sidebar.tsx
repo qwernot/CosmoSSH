@@ -111,7 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-3 rounded-xl bg-cosmo-950/60 border border-cosmo-800 text-xs text-slate-400 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span className="text-slate-300 font-mono">v1.0.2</span>
+            <span className="text-slate-300 font-mono">v1.0.3</span>
           </div>
           <span className="text-[11px] text-cosmo-500 font-mono">E2EE Ready</span>
         </div>

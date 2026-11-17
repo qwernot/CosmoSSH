@@ -100,3 +100,45 @@ export interface UpdateInfo {
   releaseUrl: string;
   assets: UpdateReleaseAsset[];
 }
+
+export interface ProcessInfo {
+  pid: number;
+  user: string;
+  cpu: number;
+  mem: number;
+  command: string;
+}
+
+export interface HostSystemStats {
+  timestamp: number;
+  cpu: {
+    usagePercent: number; // 0-100
+    cores?: number;
+  };
+  memory: {
+    total: number; // in bytes
+    used: number; // in bytes
+    free: number; // in bytes
+    available: number; // in bytes
+    usagePercent: number; // 0-100
+    swapTotal?: number;
+    swapUsed?: number;
+    swapPercent?: number;
+  };
+  disk: {
+    filesystem: string;
+    mount: string;
+    total: number; // in bytes
+    used: number; // in bytes
+    available: number; // in bytes
+    usagePercent: number; // 0-100
+  };
+  network: {
+    rxBytesPerSec: number;
+    txBytesPerSec: number;
+  };
+  loadAvg: [number, number, number]; // 1m, 5m, 15m
+  uptime: number; // in seconds
+  topProcesses: ProcessInfo[];
+}
+

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo, SFTPFileItem } from '../shared/types';
+import { HostConfig, CloudSyncConfig, AppDataPayload, UpdateInfo, SFTPFileItem, HostSystemStats } from '../shared/types';
 
 export const api = {
   // Store
@@ -226,6 +226,20 @@ export const api = {
       ipcRenderer.invoke('localFs:delete', targetPath),
     openPath: (targetPath: string): Promise<string> =>
       ipcRenderer.invoke('localFs:openPath', targetPath),
+  },
+
+  // Host System Monitor
+  monitor: {
+    start: (sessionId: string): Promise<boolean> =>
+      ipcRenderer.invoke('monitor:start', sessionId),
+    stop: (sessionId: string): Promise<boolean> =>
+      ipcRenderer.invoke('monitor:stop', sessionId),
+    onStats: (sessionId: string, callback: (stats: HostSystemStats) => void) => {
+      const channel = `monitor:stats:${sessionId}`;
+      const handler = (_event: any, stats: HostSystemStats) => callback(stats);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
   },
 };
 
