@@ -11,23 +11,27 @@ import {
   Trash2,
   ExternalLink,
   Download,
-  HardDrive
 } from 'lucide-react';
 import { SFTPFileItem } from '@shared/types';
 import { formatBytes, formatDate } from '../../utils/format';
+import { InputDialog, ConfirmDialog } from '../Common/DialogModal';
 
 interface LocalFilePaneProps {
   currentPath: string;
+  refreshTrigger?: number;
   onPathChange: (newPath: string) => void;
   onUploadToRemote: (localPaths: string[]) => void;
   onDownloadFromRemote: (remoteItem: { name: string; remotePath: string; isDir: boolean }, targetLocalDir: string) => void;
+  onNotify?: (type: 'success' | 'error', text: string) => void;
 }
 
 export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
   currentPath,
+  refreshTrigger = 0,
   onPathChange,
   onUploadToRemote,
   onDownloadFromRemote,
+  onNotify,
 }) => {
   const [files, setFiles] = useState<SFTPFileItem[]>([]);
   const [pathInput, setPathInput] = useState<string>('');
@@ -38,6 +42,10 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
     downloads: '',
     home: '',
   });
+
+  // Custom Dialog states (replaces unsupported window.prompt / confirm)
+  const [mkdirOpen, setMkdirOpen] = useState(false);
+  const [deletingItem, setDeletingItem] = useState<SFTPFileItem | null>(null);
 
   // Drag over state (from remote pane or desktop)
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -58,7 +66,13 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
       setPathInput(currentPath);
       loadDirectory(currentPath);
     }
-  }, [currentPath]);
+  }, [currentPath, refreshTrigger]);
+
+  const joinLocalPath = (baseDir: string, name: string) => {
+    const isWin = baseDir.includes('\\') || /^[a-zA-Z]:/.test(baseDir);
+    const separator = isWin ? '\\' : '/';
+    return baseDir.endsWith(separator) ? `${baseDir}${name}` : `${baseDir}${separator}${name}`;
+  };
 
   const loadDirectory = async (dirPath: string) => {
     setLoading(true);
@@ -82,7 +96,10 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
     const isWin = currentPath.includes('\\') || /^[a-zA-Z]:/.test(currentPath);
     const separator = isWin ? '\\' : '/';
     const parts = currentPath.split(/[\/\\]/).filter(Boolean);
-    if (parts.length <= 1) return;
+    if (parts.length <= 1) {
+      if (!isWin) onPathChange('/');
+      return;
+    }
     parts.pop();
     let parentPath = parts.join(separator);
     if (!isWin) {
@@ -94,55 +111,45 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
   };
 
   const handleOpenFileOrDir = async (item: SFTPFileItem) => {
-    const isWin = currentPath.includes('\\') || /^[a-zA-Z]:/.test(currentPath);
-    const separator = isWin ? '\\' : '/';
-    const fullPath = currentPath.endsWith(separator)
-      ? `${currentPath}${item.name}`
-      : `${currentPath}${separator}${item.name}`;
+    const fullPath = joinLocalPath(currentPath, item.name);
 
     if (item.type === 'd') {
       onPathChange(fullPath);
     } else {
-      // Open with system default application
       try {
-        await window.cosmossh.localFs.openPath(fullPath);
+        const errMsg = await window.cosmossh.localFs.openPath(fullPath);
+        if (errMsg && onNotify) {
+          onNotify('error', `无法打开文件: ${errMsg}`);
+        }
       } catch (e: any) {
-        alert('无法打开文件: ' + e.message);
+        onNotify?.('error', '无法打开文件: ' + e.message);
       }
     }
   };
 
-  const handleMkdir = async () => {
-    const name = prompt('请输入新建本地文件夹名称:');
-    if (!name || !name.trim()) return;
-    const isWin = currentPath.includes('\\') || /^[a-zA-Z]:/.test(currentPath);
-    const separator = isWin ? '\\' : '/';
-    const newDirPath = currentPath.endsWith(separator)
-      ? `${currentPath}${name.trim()}`
-      : `${currentPath}${separator}${name.trim()}`;
-
+  const handleConfirmMkdir = async (name: string) => {
+    setMkdirOpen(false);
+    const newDirPath = joinLocalPath(currentPath, name);
     try {
       await window.cosmossh.localFs.mkdir(newDirPath);
       loadDirectory(currentPath);
+      onNotify?.('success', `已创建本地文件夹 "${name}"`);
     } catch (e: any) {
-      alert('创建文件夹失败: ' + e.message);
+      onNotify?.('error', '创建文件夹失败: ' + e.message);
     }
   };
 
-  const handleDelete = async (item: SFTPFileItem) => {
-    const isDir = item.type === 'd';
-    if (!confirm(`确定要删除本地${isDir ? '文件夹' : '文件'} "${item.name}" 吗？此操作无法撤销。`)) return;
-    const isWin = currentPath.includes('\\') || /^[a-zA-Z]:/.test(currentPath);
-    const separator = isWin ? '\\' : '/';
-    const targetPath = currentPath.endsWith(separator)
-      ? `${currentPath}${item.name}`
-      : `${currentPath}${separator}${item.name}`;
-
+  const handleConfirmDelete = async () => {
+    if (!deletingItem) return;
+    const targetItem = deletingItem;
+    setDeletingItem(null);
+    const targetPath = joinLocalPath(currentPath, targetItem.name);
     try {
       await window.cosmossh.localFs.delete(targetPath);
       loadDirectory(currentPath);
+      onNotify?.('success', `已删除本地项目 "${targetItem.name}"`);
     } catch (e: any) {
-      alert('删除失败: ' + e.message);
+      onNotify?.('error', '删除失败: ' + e.message);
     }
   };
 
@@ -157,7 +164,10 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
     e.preventDefault();
     e.stopPropagation();
     dragCounter.current += 1;
-    setIsDraggingOver(true);
+    // Only show download overlay if dragging a remote item
+    if (e.dataTransfer.types.includes('application/cosmossh-remote-item')) {
+      setIsDraggingOver(true);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -182,7 +192,6 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
     dragCounter.current = 0;
     setIsDraggingOver(false);
 
-    // 1. Check if it's a drag from Remote SFTP Pane
     const remoteDataStr = e.dataTransfer.getData('application/cosmossh-remote-item');
     if (remoteDataStr) {
       try {
@@ -194,14 +203,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
       }
     }
 
-    // 2. Check if it's an external file drag from desktop/explorer
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const paths: string[] = [];
-      for (const file of Array.from(e.dataTransfer.files)) {
-        const p = window.cosmossh.getPathForFile(file);
-        if (p) paths.push(p);
-      }
-      // If dropped onto local pane, we can refresh
       loadDirectory(currentPath);
     }
   };
@@ -217,7 +219,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
       {/* Drop Zone Visual Overlay (When dragging from Remote to Local) */}
       {isDraggingOver && (
         <div className="absolute inset-0 bg-cosmo-950/90 backdrop-blur-md border-2 border-dashed border-emerald-400 rounded-none z-50 flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-150">
-          <div className="w-16 h-16 rounded-2xl bg-cosmo-900 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shadow-glow shadow-lg mb-3">
+          <div className="w-16 h-16 rounded-2xl bg-cosmo-900 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shadow-lg mb-3">
             <Download className="w-8 h-8 animate-bounce text-emerald-400" />
           </div>
           <h3 className="text-base font-bold text-slate-100">松开鼠标立即下载到此本地目录</h3>
@@ -225,7 +227,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
             {currentPath}
           </p>
           <p className="text-[11px] text-slate-400 mt-2">
-            ✨ WinSCP 双向拖拽：从右侧服务器直接拉到此处完成高速下载
+            支持文件与文件夹递归下载，完成后自动刷新
           </p>
         </div>
       )}
@@ -242,7 +244,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
           {specialDirs.desktop && (
             <button
               onClick={() => onPathChange(specialDirs.desktop)}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1"
+              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1 cursor-pointer"
               title={`跳转到桌面: ${specialDirs.desktop}`}
             >
               <Monitor className="w-3 h-3" /> 桌面
@@ -251,7 +253,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
           {specialDirs.downloads && (
             <button
               onClick={() => onPathChange(specialDirs.downloads)}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1"
+              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1 cursor-pointer"
               title={`跳转到下载: ${specialDirs.downloads}`}
             >
               <Download className="w-3 h-3" /> 下载
@@ -260,7 +262,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
           {specialDirs.home && (
             <button
               onClick={() => onPathChange(specialDirs.home)}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1"
+              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-300 hover:text-emerald-400 hover:bg-cosmo-800 transition-colors flex items-center gap-1 cursor-pointer"
               title={`跳转到用户目录: ${specialDirs.home}`}
             >
               <Home className="w-3 h-3" /> 家目录
@@ -273,7 +275,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
       <div className="p-2.5 bg-cosmo-900 border-b border-cosmo-800 flex items-center gap-2 shrink-0">
         <button
           onClick={handleGoUp}
-          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
           title="上一级目录"
         >
           <ArrowUp className="w-3.5 h-3.5" />
@@ -299,15 +301,15 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
 
         <button
           onClick={() => loadDirectory(currentPath)}
-          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
           title="刷新本地文件"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
 
         <button
-          onClick={handleMkdir}
-          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+          onClick={() => setMkdirOpen(true)}
+          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
           title="新建本地文件夹"
         >
           <FolderPlus className="w-3.5 h-3.5" />
@@ -315,7 +317,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
 
         <button
           onClick={handleOpenInExplorer}
-          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+          className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
           title="在系统资源管理器中打开"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -330,7 +332,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
             <p className="text-[11px] text-slate-500 mb-3">{error}</p>
             <button
               onClick={() => specialDirs.desktop && onPathChange(specialDirs.desktop)}
-              className="px-3 py-1 rounded-lg text-xs bg-cosmo-800 hover:bg-cosmo-700 text-slate-200"
+              className="px-3 py-1 rounded-lg text-xs bg-cosmo-800 hover:bg-cosmo-700 text-slate-200 cursor-pointer"
             >
               返回桌面
             </button>
@@ -356,18 +358,13 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
                 )}
                 {files.map((item) => {
                   const isDir = item.type === 'd';
-                  const isWin = currentPath.includes('\\') || /^[a-zA-Z]:/.test(currentPath);
-                  const separator = isWin ? '\\' : '/';
-                  const fullPath = currentPath.endsWith(separator)
-                    ? `${currentPath}${item.name}`
-                    : `${currentPath}${separator}${item.name}`;
+                  const fullPath = joinLocalPath(currentPath, item.name);
 
                   return (
                     <tr
                       key={item.name}
                       draggable={true}
                       onDragStart={(e) => {
-                        // Set local file transfer payload for dragging into Remote SFTP Pane
                         e.dataTransfer.setData(
                           'application/cosmossh-local-item',
                           JSON.stringify({
@@ -378,6 +375,30 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
                           })
                         );
                         e.dataTransfer.effectAllowed = 'copy';
+                      }}
+                      onDragOver={(e) => {
+                        if (isDir && e.dataTransfer.types.includes('application/cosmossh-remote-item')) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'copy';
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (isDir) {
+                          const remoteDataStr = e.dataTransfer.getData('application/cosmossh-remote-item');
+                          if (remoteDataStr) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dragCounter.current = 0;
+                            setIsDraggingOver(false);
+                            try {
+                              const remoteItem = JSON.parse(remoteDataStr);
+                              onDownloadFromRemote(remoteItem, fullPath);
+                            } catch (err) {
+                              console.error('Failed to parse remote drag data:', err);
+                            }
+                          }
+                        }
                       }}
                       onDoubleClick={() => handleOpenFileOrDir(item)}
                       className="hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none hover:text-slate-100"
@@ -413,7 +434,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
                               e.stopPropagation();
                               onUploadToRemote([fullPath]);
                             }}
-                            className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan"
+                            className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan cursor-pointer"
                             title="上传到远程服务器"
                           >
                             <Upload className="w-3.5 h-3.5" />
@@ -421,9 +442,9 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleDelete(item);
+                              setDeletingItem(item);
                             }}
-                            className="p-1 rounded hover:bg-rose-500/20 text-rose-400"
+                            className="p-1 rounded hover:bg-rose-500/20 text-rose-400 cursor-pointer"
                             title="删除本地文件"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -438,6 +459,32 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
           </div>
         )}
       </div>
+
+      {/* Custom Input Dialog: Create Local Folder */}
+      <InputDialog
+        isOpen={mkdirOpen}
+        title="新建本地文件夹"
+        description={`将在 ${currentPath} 中创建新目录`}
+        placeholder="输入文件夹名称..."
+        confirmText="创建"
+        onConfirm={handleConfirmMkdir}
+        onCancel={() => setMkdirOpen(false)}
+      />
+
+      {/* Custom Confirm Dialog: Delete Local File/Dir */}
+      <ConfirmDialog
+        isOpen={Boolean(deletingItem)}
+        title="删除本地项目"
+        message={
+          deletingItem
+            ? `确定要删除本地${deletingItem.type === 'd' ? '文件夹' : '文件'} "${deletingItem.name}" 吗？此操作无法撤销。`
+            : ''
+        }
+        confirmText="确认删除"
+        danger={true}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingItem(null)}
+      />
     </div>
   );
 };

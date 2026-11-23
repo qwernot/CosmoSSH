@@ -10,26 +10,42 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Publish GitHub Release
+  build-and-release:
+    name: Build Linux & Windows Packages and Publish Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install 7zip and zip
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install system packaging tools (7zip, zip)
         run: sudo apt-get update && sudo apt-get install -y p7zip-full zip
 
-      - name: Generate Windows .zip Package
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build application (Renderer + Main + Preload)
+        run: pnpm build
+
+      - name: Package Linux (.deb)
+        run: pnpm exec electron-builder --linux deb
+
+      - name: Package Windows Portable (.zip & .7z)
         run: |
-          mkdir -p win-temp
-          WIN_7Z=$(ls release/CosmoSSH-*-win.7z | head -n 1)
-          7z x "$WIN_7Z" -owin-temp
-          ZIP_NAME=$(basename "$WIN_7Z" .7z).zip
-          cd win-temp
-          zip -r "../release/$ZIP_NAME" .
-          cd ..
-          rm -rf win-temp
+          VERSION=$(node -p "require('./package.json').version")
+          pnpm exec electron-builder --win --dir
+          (cd release/win-unpacked && zip -r "../CosmoSSH-${VERSION}-win.zip" .)
+          7z a -t7z -mx=9 "release/CosmoSSH-${VERSION}-win.7z" ./release/win-unpacked/*
           ls -lh release/
 
       - name: Create GitHub Release and Upload Assets
@@ -46,31 +62,30 @@ jobs:
             专为极客与运维工程师打造的轻量级、高颜值跨平台终端软件。
 
             ### 📦 最新安装包下载
-            所有平台的最新安装包（Linux deb、Windows 便携 zip、Windows 7z）已发布在下方 Assets 列表中，直接点击下载即可使用！
+            所有平台的最新安装包（Linux `.deb`、Windows 便携 `.zip`、Windows 高压缩 `.7z`）均已由 GitHub Actions 自动构建并发布在下方 Assets 列表中，直接点击下载即可使用！
 
             ### 🚀 本次更新亮点 (${{ github.ref_name }})
-            - 📊 **Agentless 远程服务器硬件实时监控 (CPU/内存/磁盘/网速/进程)**：
-              - **终端常驻微型监控条**：连接终端会话后，顶栏动态展示 CPU 占用百分比、内存使用量/总量、根磁盘空间、网络实时上下行带宽（`↓ 128 KB/s ↑ 35 KB/s`）及系统负载。
-              - **高科技 HUD 详细监控仪表盘**：一键呼出高质感深空发光仪表盘，实时呈现 4 组动态仪表、内存明细、Swap 分区、磁盘剩余、连续开机时长与 **Top 5 高负载活跃进程排查列表**！
-              - **零探针零侵入 (Agentless)**：完全复用已有 SSH 连接，通过轻量级 `/proc` 内存采样（单次执行仅耗时 ~35ms，CPU 占用 < 0.05%），无须在服务器安装任何客户端或守护进程，普通非 root 用户均可无缝使用。
-              - **智能节能休眠**：离开终端标签页或断开连接时自动挂起轮询，零多余网络开销。
-            - 📂 **WinSCP 风格双栏文件传输 (双向来回拖拽)**：
-              - **左栏本地电脑**：内置本地资源管理器，一键快速跳转「桌面」、「下载」与「家目录」，可新建本地文件夹与在系统资源管理器中打开。
-              - **右栏远程服务器**：全功能 SFTP 远程文件浏览、在线编辑与管理。
-              - **双向来回拖拽**：直接从左栏拖拽到右栏即可立即上传；从右栏拖拽到左栏即可立即下载到当前本地目录！
-              - **一键极速下载到桌面**：远程文件提供「📥 一键下载到桌面」快捷按钮，无需弹窗选择路径。
-              - **双栏/单栏自由切换**：点击顶部「WinSCP 双栏模式」按钮，可一键切换全宽单栏或双栏对比视图。
-            - 🛡️ **Windows 安全与风险提示说明**：
-              - 开源软件未购买商业 EV 证书时，Windows 会提示「已保护你的电脑」。
-              - 解决方法：在弹窗中点击「更多信息」-> 点击「仍要运行」即可；或右键 exe 属性勾选「解除锁定」。
-            - ⌨️ **复制粘贴优化**：支持直接使用 `Ctrl+C`（智能识别：选中文本时复制，无选中时发送 SIGINT 中断）与 `Ctrl+V`（读取系统剪贴板粘贴），支持鼠标右键智能复制/粘贴。
-            - 🌐 **设置新增作者主页**：在设置中心新增作者主页 `666228.xyz`，支持一键在系统默认浏览器中打开。
-            - 🔄 **软件内更新与仓库更新通道**：
-              - 内置智能版本检测（遵循“逢十进一”规范：`1.0.0` -> `1.0.1` -> `1.0.2` -> `1.0.3`）；
-              - 支持在软件内直接下载适配当前操作系统的最新安装包（带实时进度条），或一键跳转至 GitHub Releases 仓库页面更新。
-            - 🏷️ **自定义服务器分组**：支持添加/重命名/切换配色/安全删除服务器分组，云端 E2EE 同步完整纳管。
-            - 📡 **双模真实网络测速**：原生 ICMP Ping + TCP SSH 握手探测，穿透本地代理与 TUN 模式。
-            - 🛡️ **Cloudflare 端到端加密云同步**：AES-256-GCM + PBKDF2 零知识加密跨设备同步。
+            - 🛠️ **核心稳定性与 Electron 体验全面升级**：
+              - 彻底替换 Electron 原生不支持的 `prompt()` / `alert()` / `confirm()`，改用深空主题自研交互弹窗与 Toast 提示，全面修复 SFTP 新建文件夹、新建文件、重命名等功能。
+              - 修复设置页与云同步页异步加载后表单不自动回显的问题，云端 Pull 同步现已完整恢复终端偏好设置。
+              - 修复 SSH 会话关闭时的事件监听泄漏及连接首屏欢迎信息偶发丢失竞态，应用退出时自动清理全部监控与连接。
+              - 补全 Tailwind 缺失色阶（`cosmo-750` / `cosmo-400`），优化更新下载器流落盘完整性。
+            - ⌨️ **终端新增一键重连 & 日志搜索 (`Ctrl+F`)**：
+              - 会话意外断开后，终端工具栏直接提供 **「🔄 重新连接」** 一键原位重连。
+              - 启用 `@xterm/addon-search`，按下 `Ctrl+F` 或点击搜索按钮即可快速检索终端历史输出。
+            - 📂 **SFTP 双栏传输深度增强**：
+              - 完整支持 **远程文件夹递归下载** 与 **非空远程目录递归删除**。
+              - 下载完成后自动刷新左栏本地文件列表；修复双栏拖拽触发双重下载的问题。
+              - 在线编辑器新增 2 MB 大文件与二进制文件保护拦截，防止误点大文件导致卡死。
+              - 修复传输队列完成后的图标持续旋转问题及切换服务器时路径错乱问题。
+            - 📊 **硬件实时监控增强 (Agentless)**：
+              - 改用 `df -Pk /` 彻底修复 LVM 长设备名折行导致磁盘显示 `0%` 的问题。
+              - 新增 5 秒执行超时保护防死锁，过滤 Docker / 虚拟桥接网卡避免网速重复叠加，兼容 Alpine/BusyBox。
+              - 首轮采样后 700ms 自动极速二次采样，连上终端 1 秒内即出真实 CPU 与网速；切离终端页自动暂停轮询。
+              - 详细 HUD 仪表盘新增操作系统发行版名称与 CPU 核心数展示。
+            - 🔐 **本地凭据安全加密 & 自动化 CI 构建**：
+              - 接入 Electron 原生 `safeStorage`（Windows DPAPI / Linux Keyring / macOS Keychain），本地存储的服务器密码、私钥与同步 Token 自动加密落盘，无缝兼容旧版配置平滑迁移。
+              - 版本号统一由 `package.json` 单一数据源自动注入；构建发布迁移至 GitHub Actions 云端自动化打包。
           draft: false
           prerelease: false
           generate_release_notes: false

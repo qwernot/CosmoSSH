@@ -148,6 +148,12 @@ export class SSHService {
     }
   }
 
+  public disconnectAll(): void {
+    for (const sessionId of Array.from(this.sessions.keys())) {
+      this.disconnect(sessionId);
+    }
+  }
+
   public getClient(sessionId: string): Client | undefined {
     return this.sessions.get(sessionId)?.client;
   }

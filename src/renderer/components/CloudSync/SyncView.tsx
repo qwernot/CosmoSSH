@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Cloud, 
   UploadCloud, 
@@ -34,6 +34,12 @@ export const SyncView: React.FC<SyncViewProps> = ({
   const [token, setToken] = useState(syncConfig.token || '');
   const [masterPassword, setMasterPassword] = useState('');
   const [autoSync, setAutoSync] = useState(syncConfig.autoSync || false);
+
+  useEffect(() => {
+    setWorkerUrl(syncConfig.workerUrl || '');
+    setToken(syncConfig.token || '');
+    setAutoSync(syncConfig.autoSync || false);
+  }, [syncConfig.workerUrl, syncConfig.token, syncConfig.autoSync]);
 
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -184,6 +190,7 @@ export const SyncView: React.FC<SyncViewProps> = ({
         hosts: decrypted.hosts || [],
         groups: decrypted.groups || appData.groups,
         snippets: decrypted.snippets || appData.snippets,
+        settings: decrypted.settings ? { ...appData.settings, ...decrypted.settings } : appData.settings,
       });
 
       const now = Date.now();

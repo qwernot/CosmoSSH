@@ -1,11 +1,12 @@
 import { app, BrowserWindow, shell, Menu } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { AppStore } from './store';
 import { SSHService } from './ssh-service';
 import { SFTPService } from './sftp-service';
 import { LocalFSService } from './local-fs-service';
 import { HostMonitorService } from './host-monitor-service';
-import { registerIpcHandlers } from './ipc-handlers';
+import { registerIpcHandlers, bindWindowEvents } from './ipc-handlers';
 
 // Disable default menu
 Menu.setApplicationMenu(null);
@@ -14,14 +15,29 @@ Menu.setApplicationMenu(null);
 app.commandLine.appendSwitch('no-sandbox');
 
 let mainWindow: BrowserWindow | null = null;
+let store: AppStore | null = null;
 
-const store = new AppStore();
 const sshService = new SSHService();
 const sftpService = new SFTPService(sshService);
 const localFSService = new LocalFSService();
 const hostMonitorService = new HostMonitorService(sshService, () => mainWindow);
 
+function cleanupTempDragCache() {
+  try {
+    const dragCacheDir = path.join(app.getPath('temp'), 'cosmossh-drag-cache');
+    if (fs.existsSync(dragCacheDir)) {
+      fs.rmSync(dragCacheDir, { recursive: true, force: true });
+    }
+  } catch {
+    // ignore cleanup failure
+  }
+}
+
 function createWindow() {
+  if (!store) {
+    store = new AppStore();
+  }
+
   mainWindow = new BrowserWindow({
     title: 'CosmoSSH',
     width: 1280,
@@ -44,16 +60,25 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    if (details.url.startsWith('https://') || details.url.startsWith('http://')) {
+      shell.openExternal(details.url);
+    }
     return { action: 'deny' };
   });
 
-  registerIpcHandlers(mainWindow, store, sshService, sftpService, localFSService, hostMonitorService);
+  registerIpcHandlers(
+    () => mainWindow,
+    store,
+    sshService,
+    sftpService,
+    localFSService,
+    hostMonitorService
+  );
+  bindWindowEvents(mainWindow);
 
   // Load Vite Dev Server in development or index.html in production
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    // mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
@@ -64,6 +89,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  cleanupTempDragCache();
   createWindow();
 
   app.on('activate', () => {
@@ -71,6 +97,13 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  hostMonitorService.stopAll();
+  sshService.disconnectAll();
+  sftpService.disconnectAll();
+  cleanupTempDragCache();
 });
 
 app.on('window-all-closed', () => {

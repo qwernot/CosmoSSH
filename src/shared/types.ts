@@ -111,6 +111,7 @@ export interface ProcessInfo {
 
 export interface HostSystemStats {
   timestamp: number;
+  osName?: string;
   cpu: {
     usagePercent: number; // 0-100
     cores?: number;

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Edit3, Check, Layers, AlertCircle } from 'lucide-react';
 import { HostGroup, HostConfig } from '@shared/types';
+import { ConfirmDialog } from '../Common/DialogModal';
 
 interface GroupManagerModalProps {
   isOpen: boolean;
@@ -35,16 +36,19 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; message: string } | null>(null);
 
   if (!isOpen) return null;
 
   const handleAddGroup = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
     const name = newGroupName.trim();
     if (!name) return;
 
     if (groups.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
-      alert('已存在同名分组，请使用其他名称');
+      setErrorMsg('已存在同名分组，请使用其他名称');
       return;
     }
 
@@ -77,8 +81,9 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
   };
 
   const handleDelete = (groupId: string, groupName: string) => {
+    setErrorMsg(null);
     if (groups.length <= 1) {
-      alert('至少需要保留一个分组，无法全部删除');
+      setErrorMsg('至少需要保留一个分组，无法全部删除');
       return;
     }
 
@@ -88,12 +93,18 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
         ? `确定要删除分组“${groupName}”吗？\n当前属于该分组的 ${assignedHosts.length} 台服务器将自动转移至其他分组。`
         : `确定要删除分组“${groupName}”吗？`;
 
-    if (!window.confirm(confirmMsg)) return;
+    setPendingDelete({ id: groupId, name: groupName, message: confirmMsg });
+  };
+
+  const confirmDeleteGroup = () => {
+    if (!pendingDelete) return;
+    const { id } = pendingDelete;
+    setPendingDelete(null);
 
     if (onDeleteGroup) {
-      onDeleteGroup(groupId);
+      onDeleteGroup(id);
     } else {
-      const remaining = groups.filter((g) => g.id !== groupId);
+      const remaining = groups.filter((g) => g.id !== id);
       onSaveGroups(remaining);
     }
   };
@@ -117,6 +128,12 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {errorMsg && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
           {/* Add New Group Form */}
           <form onSubmit={handleAddGroup} className="bg-cosmo-950 p-4 rounded-xl border border-cosmo-800 space-y-3">
             <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -267,6 +284,16 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        title="删除服务器分组"
+        message={pendingDelete?.message || ''}
+        confirmText="确认删除"
+        danger={true}
+        onConfirm={confirmDeleteGroup}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 };

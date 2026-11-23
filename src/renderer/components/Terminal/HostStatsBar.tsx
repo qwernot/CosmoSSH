@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Cpu, 
-  Layers, 
-  HardDrive, 
-  ArrowDown, 
-  ArrowUp, 
+import {
+  Cpu,
+  Layers,
+  HardDrive,
+  ArrowDown,
+  ArrowUp,
   Activity,
-  BarChart2
+  BarChart2,
 } from 'lucide-react';
 import { HostConfig, HostSystemStats } from '@shared/types';
 import { formatBytes, formatSpeed } from '../../utils/format';
@@ -16,26 +16,36 @@ interface HostStatsBarProps {
   sessionId: string;
   host: HostConfig;
   connected: boolean;
+  isVisible: boolean;
 }
 
 export const HostStatsBar: React.FC<HostStatsBarProps> = ({
   sessionId,
   host,
   connected,
+  isVisible,
 }) => {
   const [stats, setStats] = useState<HostSystemStats | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // Clear stats only when session changes or disconnects
   useEffect(() => {
-    if (!sessionId || !connected) {
+    if (!connected) {
       setStats(null);
+    }
+  }, [sessionId, connected]);
+
+  // Pause background SSH polling automatically when user leaves the Terminal tab
+  useEffect(() => {
+    if (!sessionId || !connected || !isVisible) {
+      if (sessionId) {
+        window.cosmossh.monitor.stop(sessionId);
+      }
       return;
     }
 
-    // Start background sampling for this session
     window.cosmossh.monitor.start(sessionId);
 
-    // Listen for incoming statistics from main process
     const cleanup = window.cosmossh.monitor.onStats(sessionId, (newStats) => {
       setStats(newStats);
     });
@@ -44,7 +54,7 @@ export const HostStatsBar: React.FC<HostStatsBarProps> = ({
       cleanup();
       window.cosmossh.monitor.stop(sessionId);
     };
-  }, [sessionId, connected]);
+  }, [sessionId, connected, isVisible]);
 
   if (!connected) return null;
 
@@ -64,16 +74,16 @@ export const HostStatsBar: React.FC<HostStatsBarProps> = ({
         {stats ? (
           <>
             {/* CPU Badge */}
-            <div 
+            <div
               className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border transition-colors ${getBadgeColor(cpuPercent)}`}
-              title={`CPU 实时占用: ${cpuPercent}%\n1m 负载: ${stats.loadAvg[0].toFixed(2)}`}
+              title={`CPU 实时占用: ${cpuPercent}%${stats.cpu.cores ? ` (${stats.cpu.cores} 核)` : ''}\n1m 负载: ${stats.loadAvg[0].toFixed(2)}`}
             >
               <Cpu className="w-3 h-3 shrink-0" />
               <span>CPU {cpuPercent}%</span>
             </div>
 
             {/* RAM Badge */}
-            <div 
+            <div
               className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border transition-colors ${getBadgeColor(memPercent)}`}
               title={`内存已用: ${formatBytes(stats.memory.used, 1)} / ${formatBytes(stats.memory.total, 1)} (${memPercent}%)`}
             >
@@ -82,7 +92,7 @@ export const HostStatsBar: React.FC<HostStatsBarProps> = ({
             </div>
 
             {/* Disk Badge */}
-            <div 
+            <div
               className={`hidden md:flex items-center gap-1 px-2 py-0.5 rounded-lg border transition-colors ${getBadgeColor(diskPercent)}`}
               title={`根分区磁盘空间: ${formatBytes(stats.disk.used, 1)} / ${formatBytes(stats.disk.total, 1)} (${diskPercent}%)`}
             >
@@ -91,7 +101,7 @@ export const HostStatsBar: React.FC<HostStatsBarProps> = ({
             </div>
 
             {/* Network Speed Badge */}
-            <div 
+            <div
               className="hidden lg:flex items-center gap-2 px-2 py-0.5 rounded-lg border border-cosmo-750 bg-cosmo-950/70 text-slate-300"
               title={`实时网速:\n下载: ${formatSpeed(stats.network.rxBytesPerSec)}\n上传: ${formatSpeed(stats.network.txBytesPerSec)}`}
             >

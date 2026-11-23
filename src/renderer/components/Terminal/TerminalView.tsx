@@ -2,17 +2,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { 
-  X, 
-  Plus, 
-  Terminal as TerminalIcon, 
-  FolderSync, 
-  Trash2, 
-  Command, 
-  Play, 
+import { SearchAddon } from '@xterm/addon-search';
+import {
+  X,
+  Plus,
+  Terminal as TerminalIcon,
+  FolderSync,
+  Trash2,
+  Command,
+  Play,
   AlertCircle,
   RefreshCw,
-  Copy
+  Copy,
+  Search,
+  ChevronUp,
+  ChevronDown,
+  RotateCw,
 } from 'lucide-react';
 import { HostConfig, CommandSnippet, AppSettings } from '@shared/types';
 import { HostStatsBar } from './HostStatsBar';
@@ -32,6 +37,7 @@ interface TerminalViewProps {
   activeSessionId: string | null;
   onSelectSession: (id: string) => void;
   onCloseSession: (id: string) => void;
+  onReconnectSession: (id: string) => void;
   onNewSessionClick: () => void;
   onNewSessionForHost: (host: HostConfig) => void;
   onOpenSFTP: (host: HostConfig) => void;
@@ -42,6 +48,7 @@ interface TerminalViewProps {
 interface TerminalInstance {
   term: XTerm;
   fit: FitAddon;
+  search: SearchAddon;
   cleanupData: () => void;
   element: HTMLElement;
 }
@@ -52,6 +59,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   activeSessionId,
   onSelectSession,
   onCloseSession,
+  onReconnectSession,
   onNewSessionClick,
   onNewSessionForHost,
   onOpenSFTP,
@@ -62,8 +70,41 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   const [showSnippets, setShowSnippets] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
 
+  // Terminal Search Bar (Ctrl+F)
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   // Store persistent xterm instances and data cleanup callbacks per session
   const terminalMap = useRef<Map<string, TerminalInstance>>(new Map());
+
+  const openSearchBar = () => {
+    setSearchOpen(true);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }, 20);
+  };
+
+  const closeSearchBar = () => {
+    setSearchOpen(false);
+    if (activeSessionId) {
+      const instance = terminalMap.current.get(activeSessionId);
+      instance?.search.clearDecorations();
+      instance?.term.focus();
+    }
+  };
+
+  const runSearch = (direction: 'next' | 'prev', query: string = searchQuery) => {
+    if (!activeSessionId || !query) return;
+    const instance = terminalMap.current.get(activeSessionId);
+    if (!instance) return;
+    if (direction === 'next') {
+      instance.search.findNext(query, { caseSensitive: false });
+    } else {
+      instance.search.findPrevious(query, { caseSensitive: false });
+    }
+  };
 
   // Attach or initialize xterm when each session's container div mounts
   const attachTerminalContainer = (sessionId: string, el: HTMLDivElement | null) => {
@@ -79,7 +120,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       return;
     }
 
-    // Create new XTerm instance
     const term = new XTerm({
       theme: {
         background: '#07090e',
@@ -113,15 +153,25 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     });
 
     const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(searchAddon);
     term.loadAddon(new WebLinksAddon());
 
-    // Smart Copy & Paste Keybindings (Ctrl+C / Ctrl+V / Cmd+C / Cmd+V)
+    // Smart Copy & Paste & Search Keybindings (Ctrl+C / Ctrl+V / Ctrl+F)
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       const isCtrlOrCmd = (event.ctrlKey || event.metaKey) && !event.altKey;
       if (!isCtrlOrCmd) return true;
 
-      // Handle Ctrl+C (Copy if text is selected, otherwise send SIGINT \x03)
+      // Ctrl+F -> Open terminal search bar
+      if (event.code === 'KeyF' || event.key === 'f' || event.key === 'F') {
+        if (event.type === 'keydown') {
+          openSearchBar();
+        }
+        return false;
+      }
+
+      // Ctrl+C -> Copy if selection exists, otherwise pass SIGINT \x03
       if (event.code === 'KeyC' || event.key === 'c' || event.key === 'C') {
         if (event.type === 'keydown') {
           if (term.hasSelection()) {
@@ -131,13 +181,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 window.cosmossh.clipboard.writeText(selection);
               });
             }
-            return false; // Prevent xterm from sending \x03 when copying
+            return false;
           }
         }
-        return true; // No selection -> let SIGINT pass through
+        return true;
       }
 
-      // Handle Ctrl+V (Paste from OS clipboard)
+      // Ctrl+V -> Paste from OS clipboard
       if (event.code === 'KeyV' || event.key === 'v' || event.key === 'V') {
         if (event.type === 'keydown') {
           (async () => {
@@ -157,7 +207,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             }
           })();
         }
-        return false; // Prevent xterm from sending \x16
+        return false;
       }
 
       return true;
@@ -205,6 +255,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     terminalMap.current.set(sessionId, {
       term,
       fit: fitAddon,
+      search: searchAddon,
       cleanupData: () => {
         cleanupData();
         el.removeEventListener('contextmenu', handleContextMenu);
@@ -217,7 +268,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         try {
           fitAddon.fit();
           window.cosmossh.ssh.resize(sessionId, term.rows, term.cols);
-        } catch (e) {
+        } catch {
           // ignore
         }
         term.focus();
@@ -252,10 +303,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           instance.term.rows,
           instance.term.cols
         );
-      } catch (e) {
+      } catch {
         // ignore
       }
-      instance.term.focus();
+      if (!searchOpen) {
+        instance.term.focus();
+      }
     }, 40);
 
     return () => clearTimeout(timer);
@@ -274,7 +327,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             instance.term.rows,
             instance.term.cols
           );
-        } catch (e) {
+        } catch {
           // ignore
         }
       }
@@ -293,7 +346,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       term.options.scrollback = settings.scrollback || 5000;
       try {
         fit.fit();
-      } catch (e) {
+      } catch {
         // ignore
       }
     });
@@ -319,6 +372,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     }
   };
 
+  const handleReconnectClick = () => {
+    if (!activeSessionId) return;
+    const instance = terminalMap.current.get(activeSessionId);
+    if (instance) {
+      instance.term.writeln('\r\n\x1b[36m[CosmoSSH] 正在尝试重新连接服务器...\x1b[0m');
+    }
+    onReconnectSession(activeSessionId);
+  };
+
   if (sessions.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-cosmo-950 p-6 text-center">
@@ -340,7 +402,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-cosmo-950 overflow-hidden">
+    <div
+      className="flex-1 flex flex-col h-full bg-cosmo-950 overflow-hidden"
+      onClick={() => plusMenuOpen && setPlusMenuOpen(false)}
+    >
       {/* Session Tab Bar */}
       <div className="h-11 bg-cosmo-900 border-b border-cosmo-800 flex items-center px-2 gap-1.5 overflow-x-auto shrink-0 select-none">
         {sessions.map((s) => {
@@ -373,7 +438,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                   e.stopPropagation();
                   onCloseSession(s.id);
                 }}
-                className="opacity-60 group-hover:opacity-100 hover:text-rose-400 p-0.5 rounded transition-colors"
+                className="opacity-60 group-hover:opacity-100 hover:text-rose-400 p-0.5 rounded transition-colors cursor-pointer"
                 title="关闭此会话"
               >
                 <X className="w-3.5 h-3.5" />
@@ -383,7 +448,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         })}
 
         {/* Plus Button with Menu */}
-        <div className="relative">
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={() => setPlusMenuOpen(!plusMenuOpen)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-cosmo-800 transition-colors ml-1 cursor-pointer"
@@ -433,6 +498,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 <AlertCircle className="w-3 h-3" /> {activeSession.error}
               </span>
             )}
+            {!activeSession.connected && !activeSession.connecting && (
+              <button
+                onClick={handleReconnectClick}
+                className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-[11px] font-semibold flex items-center gap-1 border border-amber-500/35 transition-colors cursor-pointer"
+                title="会话已断开，点击立即重新连接"
+              >
+                <RotateCw className="w-3 h-3" /> 重新连接
+              </button>
+            )}
           </div>
 
           {/* Real-time Hardware System Monitor Bar */}
@@ -442,6 +516,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 sessionId={activeSession.id}
                 host={activeSession.host}
                 connected={activeSession.connected}
+                isVisible={isVisible}
               />
             </div>
           )}
@@ -471,6 +546,18 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               }`}
             >
               <Command className="w-3.5 h-3.5" /> 常用命令
+            </button>
+
+            <button
+              onClick={() => (searchOpen ? closeSearchBar() : openSearchBar())}
+              className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                searchOpen
+                  ? 'bg-cosmo-cyan/20 text-cosmo-cyan'
+                  : 'hover:bg-cosmo-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="搜索终端日志 (Ctrl+F)"
+            >
+              <Search className="w-3.5 h-3.5" />
             </button>
 
             <button
@@ -506,6 +593,58 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
       {/* Persistent XTerm Containers per session */}
       <div className="flex-1 w-full h-full relative overflow-hidden bg-cosmo-950">
+        {/* Floating Terminal Search Bar (Ctrl+F) */}
+        {searchOpen && (
+          <div className="absolute top-3 right-5 z-30 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-cosmo-900/95 border border-cosmo-700 shadow-2xl backdrop-blur-md">
+            <Search className="w-3.5 h-3.5 text-cosmo-cyan shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchQuery(val);
+                if (val) runSearch('next', val);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  runSearch(e.shiftKey ? 'prev' : 'next');
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  closeSearchBar();
+                }
+              }}
+              placeholder="搜索终端输出..."
+              className="w-48 bg-cosmo-950 border border-cosmo-700 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cosmo-cyan"
+            />
+            <button
+              type="button"
+              onClick={() => runSearch('prev')}
+              className="p-1 rounded hover:bg-cosmo-800 text-slate-400 hover:text-white cursor-pointer"
+              title="上一个匹配 (Shift+Enter)"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => runSearch('next')}
+              className="p-1 rounded hover:bg-cosmo-800 text-slate-400 hover:text-white cursor-pointer"
+              title="下一个匹配 (Enter)"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={closeSearchBar}
+              className="p-1 rounded hover:bg-cosmo-800 text-slate-400 hover:text-rose-400 cursor-pointer"
+              title="关闭搜索 (Esc)"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {sessions.map((s) => (
           <div
             key={s.id}

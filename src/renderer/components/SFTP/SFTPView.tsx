@@ -1,33 +1,40 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  FolderSync, 
-  Folder, 
-  File, 
-  ArrowUp, 
-  Home, 
-  RefreshCw, 
-  Upload, 
-  FolderPlus, 
-  FilePlus, 
-  Download, 
-  Edit3, 
-  Trash2, 
-  FileCode, 
+import {
+  FolderSync,
+  Folder,
+  File,
+  ArrowUp,
+  Home,
+  RefreshCw,
+  Upload,
+  FolderPlus,
+  FilePlus,
+  Download,
+  Edit3,
+  Trash2,
+  FileCode,
   Monitor,
   Columns,
-  Sparkles,
-  ExternalLink
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { HostConfig, SFTPFileItem, TransferQueueItem } from '@shared/types';
 import { formatBytes, formatDate, formatPermissions } from '../../utils/format';
 import { FileEditorModal } from './FileEditorModal';
 import { TransferQueue } from './TransferQueue';
 import { LocalFilePane } from './LocalFilePane';
+import { InputDialog, ConfirmDialog } from '../Common/DialogModal';
 
 interface SFTPViewProps {
   hosts: HostConfig[];
   initialHost?: HostConfig | null;
 }
+
+type InputDialogMode =
+  | { type: 'mkdir' }
+  | { type: 'newfile' }
+  | { type: 'rename'; item: SFTPFileItem }
+  | null;
 
 export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const [selectedHostId, setSelectedHostId] = useState<string>(initialHost?.id || hosts[0]?.id || '');
@@ -40,6 +47,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   // WinSCP Dual-Pane Mode
   const [isDualPane, setIsDualPane] = useState<boolean>(true);
   const [localPath, setLocalPath] = useState<string>('');
+  const [localRefreshTrigger, setLocalRefreshTrigger] = useState<number>(0);
   const [specialDirs, setSpecialDirs] = useState<{ desktop: string; downloads: string; home: string }>({
     desktop: '',
     downloads: '',
@@ -50,6 +58,12 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
 
+  // Custom Dialogs & Toast
+  const [inputDialog, setInputDialog] = useState<InputDialogMode>(null);
+  const [deletingItem, setDeletingItem] = useState<SFTPFileItem | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
   // Editor Modal
   const [editingFile, setEditingFile] = useState<{ path: string; content: string } | null>(null);
   const [editorLoading, setEditorLoading] = useState(false);
@@ -58,7 +72,31 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   const [transfers, setTransfers] = useState<TransferQueueItem[]>([]);
   const [isQueueOpen, setIsQueueOpen] = useState(true);
 
-  const selectedHost = hosts.find((h) => h.id === selectedHostId) || initialHost;
+  const selectedHost = hosts.find((h) => h.id === selectedHostId) || initialHost || null;
+  const sessionId = selectedHost ? `sftp_${selectedHost.id}` : '';
+
+  const showToast = (type: 'success' | 'error', text: string) => {
+    setToast({ type, text });
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+    }, 3500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  // Auto-select first host once hosts load asynchronously
+  useEffect(() => {
+    if (!selectedHostId && hosts.length > 0) {
+      setSelectedHostId(hosts[0].id);
+    }
+  }, [hosts, selectedHostId]);
 
   useEffect(() => {
     if (initialHost) {
@@ -67,30 +105,35 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
   }, [initialHost]);
 
   useEffect(() => {
-    // Load local special dirs for quick download buttons
-    window.cosmossh.localFs.getSpecialDirs().then((dirs) => {
-      setSpecialDirs(dirs);
-      if (dirs.desktop && !localPath) {
-        setLocalPath(dirs.desktop);
-      }
-    }).catch(console.error);
+    window.cosmossh.localFs
+      .getSpecialDirs()
+      .then((dirs) => {
+        setSpecialDirs(dirs);
+        if (dirs.desktop && !localPath) {
+          setLocalPath(dirs.desktop);
+        }
+      })
+      .catch(console.error);
   }, []);
 
+  // Always load root '/' cleanly whenever switching to a different host
   useEffect(() => {
     if (selectedHost) {
-      loadDirectory(currentPath);
+      setCurrentPath('/');
+      setPathInput('/');
+      loadDirectory('/', selectedHost);
     }
-  }, [selectedHostId]);
+  }, [selectedHost?.id]);
 
-  const sessionId = selectedHost ? `sftp_${selectedHost.id}` : '';
-
-  const loadDirectory = async (targetPath: string) => {
-    if (!selectedHost) return;
+  const loadDirectory = async (targetPath: string, hostOverride?: HostConfig) => {
+    const host = hostOverride || selectedHost;
+    if (!host) return;
+    const sid = `sftp_${host.id}`;
     setLoading(true);
     setError(null);
 
     try {
-      const res = await window.cosmossh.sftp.list(sessionId, selectedHost, targetPath);
+      const res = await window.cosmossh.sftp.list(sid, host, targetPath);
       if (res.success && res.data) {
         setCurrentPath(res.data.path);
         setPathInput(res.data.path);
@@ -123,17 +166,21 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     if (item.type === 'd') {
       handleNavigate(fullPath);
     } else {
-      // Open text editor for file
+      if (!selectedHost) return;
+      if (item.size > 2 * 1024 * 1024) {
+        showToast('error', `文件 "${item.name}" 超过 2 MB，请直接下载到本地查看`);
+        return;
+      }
       setEditorLoading(true);
       try {
-        const res = await window.cosmossh.sftp.readFile(sessionId, selectedHost!, fullPath);
+        const res = await window.cosmossh.sftp.readFile(sessionId, selectedHost, fullPath);
         if (res.success && res.content !== undefined) {
           setEditingFile({ path: fullPath, content: res.content });
         } else {
-          alert('无法打开文件：' + (res.error || '可能是二进制文件或权限不足'));
+          showToast('error', res.error || '无法打开文件（可能是二进制文件或权限不足）');
         }
       } catch (err: any) {
-        alert('读取文件失败: ' + err.message);
+        showToast('error', '读取文件失败: ' + err.message);
       } finally {
         setEditorLoading(false);
       }
@@ -181,19 +228,23 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
         cleanup();
         if (res.success) {
           setTransfers((prev) =>
-            prev.map((t) => (t.id === transferId ? { ...t, status: 'completed' } : t))
+            prev.map((t) =>
+              t.id === transferId ? { ...t, status: 'completed', transferredSize: t.totalSize } : t
+            )
           );
           loadDirectory(currentPath);
         } else {
           setTransfers((prev) =>
             prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: res.error } : t))
           );
+          showToast('error', `上传失败: ${res.error}`);
         }
       } catch (err: any) {
         cleanup();
         setTransfers((prev) =>
           prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: err.message } : t))
         );
+        showToast('error', `上传异常: ${err.message}`);
       }
     }
   };
@@ -211,7 +262,13 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     e.preventDefault();
     e.stopPropagation();
     dragCounter.current += 1;
-    setIsDraggingOver(true);
+    // Do not show upload overlay when dragging a remote item over itself
+    if (
+      e.dataTransfer.types.includes('application/cosmossh-local-item') ||
+      e.dataTransfer.types.includes('Files')
+    ) {
+      setIsDraggingOver(true);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -236,7 +293,6 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     dragCounter.current = 0;
     setIsDraggingOver(false);
 
-    // 1. Check if dropped from LocalFilePane (WinSCP mode)
     const localDataStr = e.dataTransfer.getData('application/cosmossh-local-item');
     if (localDataStr) {
       try {
@@ -250,7 +306,6 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       }
     }
 
-    // 2. Check if dropped from external OS desktop
     if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
 
     const fileList = Array.from(e.dataTransfer.files);
@@ -268,10 +323,10 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     }
   };
 
-  // Core download logic (supports targetLocalPath directly or prompts user)
-  const handleDownload = async (item: SFTPFileItem, customLocalPath?: string) => {
+  // Core download logic (supports both files and recursive directories)
+  const handleDownload = async (item: SFTPFileItem, customLocalPath?: string, remotePathOverride?: string) => {
     if (!selectedHost) return;
-    const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+    const remotePath = remotePathOverride || (currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`);
 
     let localSavePath = customLocalPath;
     if (!localSavePath) {
@@ -308,18 +363,25 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       cleanup();
       if (res.success) {
         setTransfers((prev) =>
-          prev.map((t) => (t.id === transferId ? { ...t, status: 'completed' } : t))
+          prev.map((t) =>
+            t.id === transferId ? { ...t, status: 'completed', transferredSize: t.totalSize } : t
+          )
         );
+        // Automatically refresh local file pane so the newly downloaded item appears immediately
+        setLocalRefreshTrigger((n) => n + 1);
+        showToast('success', `已下载 "${item.name}"`);
       } else {
         setTransfers((prev) =>
           prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: res.error } : t))
         );
+        showToast('error', `下载失败: ${res.error}`);
       }
     } catch (err: any) {
       cleanup();
       setTransfers((prev) =>
         prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: err.message } : t))
       );
+      showToast('error', `下载异常: ${err.message}`);
     }
   };
 
@@ -337,20 +399,6 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
     handleDownload(item, targetPath);
   };
 
-  // Quick 1-click Download to Downloads folder
-  const handleQuickDownloadToDownloads = (item: SFTPFileItem) => {
-    if (!specialDirs.downloads) {
-      handleDownload(item);
-      return;
-    }
-    const isWin = specialDirs.downloads.includes('\\') || /^[a-zA-Z]:/.test(specialDirs.downloads);
-    const separator = isWin ? '\\' : '/';
-    const targetPath = specialDirs.downloads.endsWith(separator)
-      ? `${specialDirs.downloads}${item.name}`
-      : `${specialDirs.downloads}${separator}${item.name}`;
-    handleDownload(item, targetPath);
-  };
-
   // Callback when item dropped from Remote Pane into LocalFilePane
   const handleDownloadFromRemote = (
     remoteItem: { name: string; remotePath: string; isDir: boolean },
@@ -362,7 +410,8 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       ? `${targetLocalDir}${remoteItem.name}`
       : `${targetLocalDir}${separator}${remoteItem.name}`;
 
-    const item: SFTPFileItem = {
+    const matched = files.find((f) => f.name === remoteItem.name);
+    const item: SFTPFileItem = matched || {
       name: remoteItem.name,
       type: remoteItem.isDir ? 'd' : '-',
       size: 0,
@@ -370,87 +419,98 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       accessTime: Math.floor(Date.now() / 1000),
       permissions: 0o644,
     };
-    handleDownload(item, targetLocalPath);
+    handleDownload(item, targetLocalPath, remoteItem.remotePath);
   };
 
-  const handleDelete = async (item: SFTPFileItem) => {
-    if (!selectedHost) return;
-    const isDir = item.type === 'd';
-    if (!confirm(`确定要删除 ${isDir ? '目录' : '文件'} "${item.name}" 吗？此操作无法撤销。`)) return;
+  const handleConfirmDelete = async () => {
+    if (!deletingItem || !selectedHost) return;
+    const item = deletingItem;
+    setDeletingItem(null);
 
+    const isDir = item.type === 'd';
     const fullPath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
     try {
       const res = await window.cosmossh.sftp.delete(sessionId, selectedHost, fullPath, isDir);
       if (res.success) {
         loadDirectory(currentPath);
+        showToast('success', `已删除 "${item.name}"`);
       } else {
-        alert('删除失败: ' + res.error);
+        showToast('error', '删除失败: ' + res.error);
       }
     } catch (err: any) {
-      alert('删除失败: ' + err.message);
+      showToast('error', '删除失败: ' + err.message);
     }
   };
 
-  const handleMkdir = async () => {
-    if (!selectedHost) return;
-    const folderName = prompt('请输入新目录名称:');
-    if (!folderName || !folderName.trim()) return;
+  const handleInputDialogConfirm = async (value: string) => {
+    if (!inputDialog || !selectedHost) return;
+    const mode = inputDialog;
+    setInputDialog(null);
 
-    const fullPath = currentPath === '/' ? `/${folderName.trim()}` : `${currentPath}/${folderName.trim()}`;
-    try {
-      const res = await window.cosmossh.sftp.mkdir(sessionId, selectedHost, fullPath);
-      if (res.success) {
-        loadDirectory(currentPath);
-      } else {
-        alert('创建目录失败: ' + res.error);
+    if (mode.type === 'mkdir') {
+      const fullPath = currentPath === '/' ? `/${value}` : `${currentPath}/${value}`;
+      try {
+        const res = await window.cosmossh.sftp.mkdir(sessionId, selectedHost, fullPath);
+        if (res.success) {
+          loadDirectory(currentPath);
+          showToast('success', `已创建目录 "${value}"`);
+        } else {
+          showToast('error', '创建目录失败: ' + res.error);
+        }
+      } catch (err: any) {
+        showToast('error', '创建目录失败: ' + err.message);
       }
-    } catch (err: any) {
-      alert('创建目录失败: ' + err.message);
-    }
-  };
-
-  const handleNewFile = async () => {
-    if (!selectedHost) return;
-    const fileName = prompt('请输入新文件名称 (例: test.txt 或 config.json):');
-    if (!fileName || !fileName.trim()) return;
-
-    const fullPath = currentPath === '/' ? `/${fileName.trim()}` : `${currentPath}/${fileName.trim()}`;
-    try {
-      const res = await window.cosmossh.sftp.writeFile(sessionId, selectedHost, fullPath, '');
-      if (res.success) {
-        loadDirectory(currentPath);
-        // Open in editor directly
-        setEditingFile({ path: fullPath, content: '' });
-      } else {
-        alert('创建文件失败: ' + res.error);
+    } else if (mode.type === 'newfile') {
+      const fullPath = currentPath === '/' ? `/${value}` : `${currentPath}/${value}`;
+      try {
+        const res = await window.cosmossh.sftp.writeFile(sessionId, selectedHost, fullPath, '');
+        if (res.success) {
+          loadDirectory(currentPath);
+          setEditingFile({ path: fullPath, content: '' });
+        } else {
+          showToast('error', '创建文件失败: ' + res.error);
+        }
+      } catch (err: any) {
+        showToast('error', '创建文件失败: ' + err.message);
       }
-    } catch (err: any) {
-      alert('创建文件失败: ' + err.message);
-    }
-  };
-
-  const handleRename = async (item: SFTPFileItem) => {
-    if (!selectedHost) return;
-    const newName = prompt('请输入新名称:', item.name);
-    if (!newName || newName.trim() === item.name) return;
-
-    const oldPath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
-    const newPath = currentPath === '/' ? `/${newName.trim()}` : `${currentPath}/${newName.trim()}`;
-
-    try {
-      const res = await window.cosmossh.sftp.rename(sessionId, selectedHost, oldPath, newPath);
-      if (res.success) {
-        loadDirectory(currentPath);
-      } else {
-        alert('重命名失败: ' + res.error);
+    } else if (mode.type === 'rename') {
+      if (value === mode.item.name) return;
+      const oldPath = currentPath === '/' ? `/${mode.item.name}` : `${currentPath}/${mode.item.name}`;
+      const newPath = currentPath === '/' ? `/${value}` : `${currentPath}/${value}`;
+      try {
+        const res = await window.cosmossh.sftp.rename(sessionId, selectedHost, oldPath, newPath);
+        if (res.success) {
+          loadDirectory(currentPath);
+          showToast('success', `已重命名为 "${value}"`);
+        } else {
+          showToast('error', '重命名失败: ' + res.error);
+        }
+      } catch (err: any) {
+        showToast('error', '重命名失败: ' + err.message);
       }
-    } catch (err: any) {
-      alert('重命名失败: ' + err.message);
     }
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-cosmo-950 overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-cosmo-950 overflow-hidden relative">
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed top-12 right-6 z-50 px-4 py-2.5 rounded-xl border shadow-2xl text-xs font-medium flex items-center gap-2 backdrop-blur-md animate-in fade-in duration-150 ${
+            toast.type === 'success'
+              ? 'bg-cosmo-900/95 border-emerald-500/40 text-emerald-400'
+              : 'bg-cosmo-900/95 border-rose-500/40 text-rose-400'
+          }`}
+        >
+          {toast.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          )}
+          <span>{toast.text}</span>
+        </div>
+      )}
+
       {/* Top Bar: Host Selector & WinSCP Dual-Pane Mode Switcher */}
       <header className="h-14 px-5 border-b border-cosmo-800 flex items-center justify-between shrink-0 bg-cosmo-900/60 backdrop-blur">
         <div className="flex items-center gap-3">
@@ -462,12 +522,10 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
             <span className="text-xs text-slate-400">目标服务器:</span>
             <select
               value={selectedHostId}
-              onChange={(e) => {
-                setSelectedHostId(e.target.value);
-                setCurrentPath('/');
-              }}
+              onChange={(e) => setSelectedHostId(e.target.value)}
               className="bg-cosmo-950 border border-cosmo-700 rounded-xl px-3 py-1 text-xs text-slate-200 focus:outline-none focus:border-cosmo-cyan"
             >
+              {hosts.length === 0 && <option value="">请先添加服务器</option>}
               {hosts.map((h) => (
                 <option key={h.id} value={h.id}>
                   {h.name} ({h.host})
@@ -478,6 +536,12 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
         </div>
 
         <div className="flex items-center gap-3">
+          {editorLoading && (
+            <span className="text-xs text-cosmo-cyan flex items-center gap-1 font-mono">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> 正在读取文件...
+            </span>
+          )}
+
           {selectedHost && (
             <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -488,7 +552,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           {/* Dual-Pane / Single-Pane Toggle */}
           <button
             onClick={() => setIsDualPane(!isDualPane)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border shadow-sm ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border shadow-sm cursor-pointer ${
               isDualPane
                 ? 'bg-cosmo-cyan/15 text-cosmo-cyan border-cosmo-cyan/40 shadow-glow-cyan/10'
                 : 'bg-cosmo-800 text-slate-300 border-cosmo-700 hover:bg-cosmo-750'
@@ -508,9 +572,11 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           <div className="w-1/2 min-w-[340px] flex flex-col h-full">
             <LocalFilePane
               currentPath={localPath}
+              refreshTrigger={localRefreshTrigger}
               onPathChange={setLocalPath}
               onUploadToRemote={uploadLocalFiles}
               onDownloadFromRemote={handleDownloadFromRemote}
+              onNotify={showToast}
             />
           </div>
         )}
@@ -524,14 +590,14 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
               <button
                 onClick={handleGoUp}
                 disabled={currentPath === '/'}
-                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 disabled:opacity-40 transition-colors shrink-0"
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 disabled:opacity-40 transition-colors shrink-0 cursor-pointer"
                 title="返回上一级"
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => handleNavigate('/')}
-                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
                 title="根目录 /"
               >
                 <Home className="w-3.5 h-3.5" />
@@ -556,7 +622,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
 
               <button
                 onClick={() => loadDirectory(currentPath)}
-                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0"
+                className="p-1.5 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-slate-300 transition-colors shrink-0 cursor-pointer"
                 title="刷新远程文件"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -567,19 +633,19 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
             <div className="flex items-center gap-1.5">
               <button
                 onClick={handleUpload}
-                className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-xs font-semibold flex items-center gap-1 border border-cosmo-cyan/30 shadow-sm"
+                className="px-2.5 py-1 rounded-lg bg-cosmo-800 hover:bg-cosmo-700 text-cosmo-cyan text-xs font-semibold flex items-center gap-1 border border-cosmo-cyan/30 shadow-sm cursor-pointer"
               >
                 <Upload className="w-3.5 h-3.5" /> 上传
               </button>
               <button
-                onClick={handleMkdir}
-                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700"
+                onClick={() => setInputDialog({ type: 'mkdir' })}
+                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700 cursor-pointer"
               >
                 <FolderPlus className="w-3.5 h-3.5" /> 新建文件夹
               </button>
               <button
-                onClick={handleNewFile}
-                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700"
+                onClick={() => setInputDialog({ type: 'newfile' })}
+                className="px-2 py-1 rounded-lg bg-cosmo-850 hover:bg-cosmo-750 text-slate-300 text-xs font-medium flex items-center gap-1 border border-cosmo-700 cursor-pointer"
               >
                 <FilePlus className="w-3.5 h-3.5" /> 新建文件
               </button>
@@ -587,7 +653,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           </div>
 
           {/* File List Table */}
-          <div 
+          <div
             className="flex-1 overflow-y-auto p-2 relative"
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
@@ -605,7 +671,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                   {currentPath}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-2">
-                  ✨ 支持从左侧本地电脑直接拖拽，或从桌面直接拖拽上传
+                  支持从左侧本地电脑直接拖拽，或从桌面直接拖拽上传
                 </p>
               </div>
             )}
@@ -616,7 +682,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                 <p className="text-xs text-slate-500 mb-4">{error}</p>
                 <button
                   onClick={() => loadDirectory(currentPath)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium bg-cosmo-800 hover:bg-cosmo-700 text-slate-200"
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-cosmo-800 hover:bg-cosmo-700 text-slate-200 cursor-pointer"
                 >
                   重试
                 </button>
@@ -630,7 +696,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                       <th className="py-2 px-3 w-20">大小</th>
                       <th className="py-2 px-3 w-24">权限</th>
                       <th className="py-2 px-3 w-28">修改时间</th>
-                      <th className="py-2 px-3 w-32 text-right">操作</th>
+                      <th className="py-2 px-3 w-36 text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-cosmo-800/60 text-xs text-slate-300 font-mono">
@@ -649,7 +715,6 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                           draggable={true}
                           onDragStart={(e) => {
                             const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
-                            // 1. Set payload for dropping onto LocalFilePane (WinSCP mode)
                             e.dataTransfer.setData(
                               'application/cosmossh-remote-item',
                               JSON.stringify({
@@ -659,19 +724,13 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                               })
                             );
                             e.dataTransfer.effectAllowed = 'copy';
-
-                            // 2. Also invoke native drag-out for OS desktop if non-dir
-                            if (!isDir && selectedHost) {
-                              window.cosmossh.sftp.startDrag({
-                                sessionId,
-                                hostConfig: selectedHost,
-                                remotePath,
-                                filename: item.name,
-                              });
-                            }
                           }}
                           onDragOver={(e) => {
-                            if (isDir) {
+                            if (
+                              isDir &&
+                              (e.dataTransfer.types.includes('application/cosmossh-local-item') ||
+                                e.dataTransfer.types.includes('Files'))
+                            ) {
                               e.preventDefault();
                               e.stopPropagation();
                               e.dataTransfer.dropEffect = 'copy';
@@ -685,7 +744,6 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                               dragCounter.current = 0;
                               const targetDir = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
 
-                              // Drop from local pane
                               const localDataStr = e.dataTransfer.getData('application/cosmossh-local-item');
                               if (localDataStr) {
                                 try {
@@ -694,10 +752,9 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                                     await uploadLocalFiles([localItem.fullPath], targetDir);
                                     return;
                                   }
-                                } catch (err) {}
+                                } catch {}
                               }
 
-                              // Drop from desktop
                               const fileList = Array.from(e.dataTransfer.files);
                               const localPaths = fileList.map((f) => window.cosmossh.getPathForFile(f)).filter(Boolean);
                               if (localPaths.length > 0) {
@@ -706,13 +763,11 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                             }
                           }}
                           onDoubleClick={() => handleOpenFileOrDir(item)}
-                          className={`hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none ${
-                            !isDir ? 'hover:text-slate-100 cursor-grab active:cursor-grabbing' : ''
-                          }`}
+                          className="hover:bg-cosmo-800/50 cursor-pointer transition-colors group select-none hover:text-slate-100"
                           title={
-                            !isDir
-                              ? '按住拖动可直接拉到左侧本地目录下载，或点击右侧按钮快速下载至桌面'
-                              : '双击进入目录，支持将左侧文件拖拽至此文件夹上传'
+                            isDir
+                              ? '双击进入目录；按住可拖拽至左侧下载整个文件夹，也可将左侧文件拖入此文件夹上传'
+                              : '按住拖动可直接拉到左侧本地目录下载，双击可在线编辑'
                           }
                         >
                           <td className="py-2 px-3 flex items-center gap-2">
@@ -740,36 +795,34 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
 
                           <td className="py-2 px-3 text-right">
                             <div className="flex items-center justify-end gap-1 opacity-30 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleQuickDownloadToDesktop(item);
+                                }}
+                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400 cursor-pointer"
+                                title="一键快速下载到桌面"
+                              >
+                                <Monitor className="w-3.5 h-3.5" />
+                              </button>
                               {!isDir && (
-                                <>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleQuickDownloadToDesktop(item);
-                                    }}
-                                    className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400"
-                                    title="📥 一键快速下载到桌面"
-                                  >
-                                    <Monitor className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOpenFileOrDir(item);
-                                    }}
-                                    className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan"
-                                    title="在线查看与编辑"
-                                  >
-                                    <Edit3 className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenFileOrDir(item);
+                                  }}
+                                  className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-cosmo-cyan cursor-pointer"
+                                  title="在线查看与编辑"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
                               )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDownload(item);
                                 }}
-                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400"
+                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-emerald-400 cursor-pointer"
                                 title="选择目录下载"
                               >
                                 <Download className="w-3.5 h-3.5" />
@@ -777,9 +830,9 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleRename(item);
+                                  setInputDialog({ type: 'rename', item });
                                 }}
-                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-amber-400"
+                                className="p-1 rounded hover:bg-cosmo-700 text-slate-300 hover:text-amber-400 cursor-pointer"
                                 title="重命名"
                               >
                                 <FileCode className="w-3.5 h-3.5" />
@@ -787,9 +840,9 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDelete(item);
+                                  setDeletingItem(item);
                                 }}
-                                className="p-1 rounded hover:bg-rose-500/20 text-rose-400"
+                                className="p-1 rounded hover:bg-rose-500/20 text-rose-400 cursor-pointer"
                                 title="删除"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -806,6 +859,49 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
           </div>
         </div>
       </div>
+
+      {/* Custom Input Dialog for Mkdir / NewFile / Rename */}
+      <InputDialog
+        isOpen={Boolean(inputDialog)}
+        title={
+          inputDialog?.type === 'mkdir'
+            ? '新建远程目录'
+            : inputDialog?.type === 'newfile'
+            ? '新建远程文件'
+            : '重命名远程项目'
+        }
+        description={
+          inputDialog?.type === 'rename'
+            ? `原名称: ${inputDialog.item.name}`
+            : `当前路径: ${currentPath}`
+        }
+        placeholder={
+          inputDialog?.type === 'mkdir'
+            ? '输入新目录名称...'
+            : inputDialog?.type === 'newfile'
+            ? '例如: config.json 或 test.txt'
+            : '输入新名称...'
+        }
+        defaultValue={inputDialog?.type === 'rename' ? inputDialog.item.name : ''}
+        confirmText={inputDialog?.type === 'rename' ? '重命名' : '创建'}
+        onConfirm={handleInputDialogConfirm}
+        onCancel={() => setInputDialog(null)}
+      />
+
+      {/* Custom Confirm Dialog for Delete */}
+      <ConfirmDialog
+        isOpen={Boolean(deletingItem)}
+        title="删除远程项目"
+        message={
+          deletingItem
+            ? `确定要删除远程${deletingItem.type === 'd' ? '目录（含其中全部子文件）' : '文件'} "${deletingItem.name}" 吗？此操作无法撤销。`
+            : ''
+        }
+        confirmText="确认删除"
+        danger={true}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingItem(null)}
+      />
 
       {/* Remote File Editor Modal */}
       {editingFile && (

@@ -37,7 +37,7 @@ export const TransferQueue: React.FC<TransferQueueProps> = ({
         className="px-4 py-2.5 bg-cosmo-850 flex items-center justify-between cursor-pointer hover:bg-cosmo-800 transition-colors border-b border-cosmo-800"
       >
         <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-          <FolderSync className="w-4 h-4 text-cosmo-cyan animate-spin" />
+          <FolderSync className={`w-4 h-4 text-cosmo-cyan ${activeCount > 0 ? 'animate-spin' : ''}`} />
           <span>文件传输队列 ({transfers.length})</span>
           {activeCount > 0 && (
             <span className="px-2 py-0.5 rounded-full bg-cosmo-cyan/20 text-cosmo-cyan text-[10px]">

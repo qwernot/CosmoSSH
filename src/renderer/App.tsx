@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { HostList } from './components/HostManager/HostList';
@@ -12,7 +12,7 @@ import { AppDataPayload, CloudSyncConfig, HostConfig, HostGroup, AppSettings, Up
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('hosts');
   const [appData, setAppData] = useState<AppDataPayload>({
-    version: '1.0.3',
+    version: __APP_VERSION__,
     updatedAt: Date.now(),
     hosts: [],
     groups: [],
@@ -35,6 +35,9 @@ export const App: React.FC = () => {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sftpTargetHost, setSftpTargetHost] = useState<HostConfig | null>(null);
+
+  // Track SSH close IPC listener cleanups to prevent memory leaks
+  const closeCleanupsRef = useRef<Map<string, () => void>>(new Map());
 
   // Updater State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -65,17 +68,61 @@ export const App: React.FC = () => {
         if (info && info.hasUpdate) {
           setUpdateInfo(info);
         }
-      } catch (e) {
+      } catch {
         // ignore network error
       }
     }, 2500);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      closeCleanupsRef.current.forEach((cleanup) => cleanup());
+      closeCleanupsRef.current.clear();
+    };
   }, []);
+
+  const openSSHConnection = async (sessionId: string, host: HostConfig) => {
+    // Cleanup any previous close listener for this sessionId
+    closeCleanupsRef.current.get(sessionId)?.();
+
+    // Attach close listener BEFORE initiating connect so early disconnects are never missed
+    const cleanupClose = window.cosmossh.ssh.onClose(sessionId, () => {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, connected: false, connecting: false } : s))
+      );
+    });
+    closeCleanupsRef.current.set(sessionId, cleanupClose);
+
+    // Wait two animation frames so TerminalView mounts xterm & attaches ssh.onData before MOTD arrives
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+
+    try {
+      const res = await window.cosmossh.ssh.connect(sessionId, host, 24, 80);
+      if (res.success) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, connected: true, connecting: false, error: undefined } : s
+          )
+        );
+      } else {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, connected: false, connecting: false, error: res.error } : s
+          )
+        );
+      }
+    } catch (err: any) {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId ? { ...s, connected: false, connecting: false, error: err.message } : s
+        )
+      );
+    }
+  };
 
   // SSH Actions
   const handleConnectSSH = async (host: HostConfig) => {
-    // Count existing sessions for this host to generate unique tab title
     const hostSessions = sessions.filter((s) => s.host.id === host.id);
     const sessionCount = hostSessions.length;
     const sessionTitle = sessionCount > 0 ? `${host.name} #${sessionCount + 1}` : host.name;
@@ -93,36 +140,26 @@ export const App: React.FC = () => {
     setActiveSessionId(sessionId);
     setCurrentTab('terminal');
 
-    try {
-      const res = await window.cosmossh.ssh.connect(sessionId, host, 24, 80);
-      if (res.success) {
-        setSessions((prev) =>
-          prev.map((s) => (s.id === sessionId ? { ...s, connected: true, connecting: false } : s))
-        );
-      } else {
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId ? { ...s, connected: false, connecting: false, error: res.error } : s
-          )
-        );
-      }
-    } catch (err: any) {
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId ? { ...s, connected: false, connecting: false, error: err.message } : s
-        )
-      );
-    }
+    await openSSHConnection(sessionId, host);
+  };
 
-    // Attach close listener
-    window.cosmossh.ssh.onClose(sessionId, () => {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, connected: false, connecting: false } : s))
-      );
-    });
+  const handleReconnectSession = async (sessionId: string) => {
+    const target = sessions.find((s) => s.id === sessionId);
+    if (!target || target.connecting) return;
+
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId ? { ...s, connected: false, connecting: true, error: undefined } : s
+      )
+    );
+
+    await openSSHConnection(sessionId, target.host);
   };
 
   const handleCloseSession = async (sessionId: string) => {
+    closeCleanupsRef.current.get(sessionId)?.();
+    closeCleanupsRef.current.delete(sessionId);
+
     await window.cosmossh.ssh.disconnect(sessionId);
     setSessions((prev) => {
       const remaining = prev.filter((s) => s.id !== sessionId);
@@ -221,6 +258,7 @@ export const App: React.FC = () => {
               activeSessionId={activeSessionId}
               onSelectSession={setActiveSessionId}
               onCloseSession={handleCloseSession}
+              onReconnectSession={handleReconnectSession}
               onNewSessionClick={() => setCurrentTab('hosts')}
               onNewSessionForHost={handleConnectSSH}
               onOpenSFTP={handleOpenSFTP}

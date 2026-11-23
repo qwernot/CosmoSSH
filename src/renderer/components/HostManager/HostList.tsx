@@ -22,6 +22,7 @@ import {
 import { HostConfig, HostGroup } from '@shared/types';
 import { HostModal } from './HostModal';
 import { GroupManagerModal } from './GroupManagerModal';
+import { ConfirmDialog } from '../Common/DialogModal';
 
 interface HostListProps {
   hosts: HostConfig[];
@@ -50,6 +51,7 @@ export const HostList: React.FC<HostListProps> = ({
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<HostConfig | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [deletingHost, setDeletingHost] = useState<{ id: string; name: string } | null>(null);
   const [latencies, setLatencies] = useState<Record<string, { latency?: number; loading?: boolean; error?: string }>>({});
   const [pingingAll, setPingingAll] = useState(false);
 
@@ -123,9 +125,7 @@ export const HostList: React.FC<HostListProps> = ({
   };
 
   const handleDelete = (id: string, name: string) => {
-    if (confirm(`确定要删除服务器 "${name}" 吗？此操作无法撤销。`)) {
-      onDeleteHost(id);
-    }
+    setDeletingHost({ id, name });
     setMenuOpenId(null);
   };
 
@@ -454,6 +454,21 @@ export const HostList: React.FC<HostListProps> = ({
         hosts={hosts}
         onSaveGroups={onSaveGroups}
         onDeleteGroup={onDeleteGroup}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(deletingHost)}
+        title="删除服务器"
+        message={deletingHost ? `确定要删除服务器 "${deletingHost.name}" 吗？此操作无法撤销。` : ''}
+        confirmText="确认删除"
+        danger={true}
+        onConfirm={() => {
+          if (deletingHost) {
+            onDeleteHost(deletingHost.id);
+          }
+          setDeletingHost(null);
+        }}
+        onCancel={() => setDeletingHost(null)}
       />
     </div>
   );

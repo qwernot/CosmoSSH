@@ -67,7 +67,9 @@ export const HostStatsModal: React.FC<HostStatsModalProps> = ({
                 </span>
               </h3>
               <p className="text-xs text-slate-400 font-mono mt-0.5">
-                端口: {host.port || 22} · 用户: {host.username} · 每 2.5s 周期无侵入采样
+                {stats?.osName ? `${stats.osName} · ` : ''}
+                {stats?.cpu.cores ? `${stats.cpu.cores} 核 CPU · ` : ''}
+                端口: {host.port || 22} · 用户: {host.username}
               </p>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, 
   Type, 
@@ -37,6 +37,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [cursorBlink, setCursorBlink] = useState(settings.cursorBlink ?? true);
   const [scrollback, setScrollback] = useState(settings.scrollback || 5000);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [importNotice, setImportNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Sync local form state whenever settings load asynchronously or from cloud pull
+  useEffect(() => {
+    setFontSize(settings.fontSize || 14);
+    setFontFamily(settings.fontFamily || "'JetBrains Mono', monospace");
+    setCursorBlink(settings.cursorBlink ?? true);
+    setScrollback(settings.scrollback || 5000);
+  }, [settings.fontSize, settings.fontFamily, settings.cursorBlink, settings.scrollback]);
 
   // Update check state
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -53,7 +62,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onOpenUpdater();
         }
       } else {
-        setCheckUpdateResult(`当前已是最新版本 (v1.0.3)`);
+        setCheckUpdateResult(`当前已是最新版本 (v${__APP_VERSION__})`);
       }
     } catch (e: any) {
       setCheckUpdateResult(`检查更新失败: ${e.message}`);
@@ -95,12 +104,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed && Array.isArray(parsed.hosts)) {
           onImportData(parsed);
-          alert(`成功导入 ${parsed.hosts.length} 台服务器资产！`);
+          setImportNotice({ type: 'success', text: `成功导入 ${parsed.hosts.length} 台服务器资产！` });
         } else {
-          alert('导入失败：文件格式不符合预期');
+          setImportNotice({ type: 'error', text: '导入失败：文件格式不符合预期' });
         }
       } catch (err: any) {
-        alert('解析 JSON 失败: ' + err.message);
+        setImportNotice({ type: 'error', text: '解析 JSON 失败: ' + err.message });
       }
     };
     reader.readAsText(file);
@@ -223,6 +232,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
             </label>
           </div>
+          {importNotice && (
+            <p className={`text-xs font-medium ${importNotice.type === 'success' ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {importNotice.text}
+            </p>
+          )}
         </div>
 
         {/* Version Updates & Upgrade */}
@@ -231,7 +245,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
               <RefreshCw className={`w-4 h-4 text-cosmo-cyan ${checkingUpdate ? 'animate-spin' : ''}`} /> 软件更新与升级通道
             </h3>
-            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v1.0.3</span>
+            <span className="text-[11px] font-mono text-cosmo-400">逢十进一规范: v{__APP_VERSION__}</span>
           </div>
           <p className="text-xs text-slate-400">
             CosmoSSH 支持在软件内一键直接下载最新安装包升级，或直接前往 GitHub Releases 官方仓库页面下载。
@@ -310,13 +324,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 CosmoSSH 终端
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cosmo-cyan/10 text-cosmo-cyan border border-cosmo-cyan/30">
-                  v1.0.3
+                  v{__APP_VERSION__}
                 </span>
               </h4>
               <p className="text-xs text-slate-400">
                 专为极客与运维工程师打造的轻量级 SSH & SFTP 终端客户端
               </p>
-              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version 1.0.3 (Linux deb / Windows Portable)</p>
+              <p className="text-[11px] text-cosmo-500 font-mono mt-0.5">Version {__APP_VERSION__} (Linux deb / Windows Portable)</p>
             </div>
           </div>
 

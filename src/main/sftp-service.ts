@@ -1,4 +1,4 @@
-import { Client, SFTPWrapper, ConnectConfig } from 'ssh2';
+import { Client, SFTPWrapper, ConnectConfig, Stats } from 'ssh2';
 import path from 'path';
 import fs from 'fs';
 import { HostConfig, SFTPFileItem } from '../shared/types';
@@ -10,6 +10,8 @@ interface SFTPSession {
   isDedicatedClient: boolean;
   currentPath: string;
 }
+
+const MAX_EDITABLE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export class SFTPService {
   private sessions = new Map<string, SFTPSession>();
@@ -50,6 +52,8 @@ export class SFTPService {
       port: hostConfig.port || 22,
       username: hostConfig.username,
       readyTimeout: 20000,
+      keepaliveInterval: 15000,
+      keepaliveCountMax: 3,
     };
 
     if (hostConfig.authType === 'password') {
@@ -93,6 +97,15 @@ export class SFTPService {
       } catch (e) {
         reject(e);
       }
+    });
+  }
+
+  private statRemote(sftp: SFTPWrapper, remotePath: string): Promise<Stats> {
+    return new Promise((resolve, reject) => {
+      sftp.stat(remotePath, (err, stats) => {
+        if (err) return reject(err);
+        resolve(stats);
+      });
     });
   }
 
@@ -153,13 +166,45 @@ export class SFTPService {
   ): Promise<string> {
     const session = await this.getOrOpenSession(sessionId, hostConfig);
 
+    // Guard against opening huge files in the in-app text editor
+    try {
+      const stats = await this.statRemote(session.sftp, filePath);
+      if (stats.size > MAX_EDITABLE_FILE_BYTES) {
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        throw new Error(`文件体积为 ${sizeMB} MB，超过在线编辑上限 (2 MB)，请直接下载到本地查看`);
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('超过在线编辑上限')) {
+        throw err;
+      }
+    }
+
     return new Promise((resolve, reject) => {
-      const stream = session.sftp.createReadStream(filePath, { encoding: 'utf-8' });
-      let data = '';
-      stream.on('data', (chunk: string | Buffer) => {
-        data += chunk;
+      const stream = session.sftp.createReadStream(filePath);
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      let checkedBinary = false;
+
+      stream.on('data', (chunk: Buffer | string) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buf.length;
+        if (totalBytes > MAX_EDITABLE_FILE_BYTES) {
+          stream.destroy();
+          reject(new Error('文件体积超过在线编辑上限 (2 MB)，请直接下载到本地查看'));
+          return;
+        }
+        if (!checkedBinary && buf.length > 0) {
+          checkedBinary = true;
+          const sample = buf.subarray(0, Math.min(buf.length, 4096));
+          if (sample.includes(0)) {
+            stream.destroy();
+            reject(new Error('检测到二进制文件，暂不支持在线文本编辑，请下载到本地打开'));
+            return;
+          }
+        }
+        chunks.push(buf);
       });
-      stream.on('end', () => resolve(data));
+      stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
       stream.on('error', (err: any) => reject(err));
     });
   }
@@ -221,6 +266,54 @@ export class SFTPService {
         },
         (err) => {
           if (err) return reject(err);
+          if (onProgress) onProgress(total, total);
+          resolve();
+        }
+      );
+    });
+  }
+
+  private async downloadRecursive(
+    sftp: SFTPWrapper,
+    remotePath: string,
+    localPath: string,
+    onProgress?: (transferred: number, total: number) => void
+  ): Promise<void> {
+    const stats = await this.statRemote(sftp, remotePath);
+
+    if (stats.isDirectory()) {
+      fs.mkdirSync(localPath, { recursive: true });
+      const entries = await new Promise<any[]>((resolve, reject) => {
+        sftp.readdir(remotePath, (err, list) => {
+          if (err) return reject(err);
+          resolve(list);
+        });
+      });
+
+      for (const entry of entries) {
+        if (entry.filename === '.' || entry.filename === '..') continue;
+        const subRemote = remotePath.endsWith('/') ? `${remotePath}${entry.filename}` : `${remotePath}/${entry.filename}`;
+        const subLocal = path.join(localPath, entry.filename);
+        await this.downloadRecursive(sftp, subRemote, subLocal, onProgress);
+      }
+      return;
+    }
+
+    const total = stats.size;
+    return new Promise((resolve, reject) => {
+      sftp.fastGet(
+        remotePath,
+        localPath,
+        {
+          step: (transferred, _chunk, totalBytes) => {
+            if (onProgress) {
+              onProgress(transferred, totalBytes || total);
+            }
+          },
+        },
+        (err) => {
+          if (err) return reject(err);
+          if (onProgress) onProgress(total, total);
           resolve();
         }
       );
@@ -235,23 +328,32 @@ export class SFTPService {
     onProgress?: (transferred: number, total: number) => void
   ): Promise<void> {
     const session = await this.getOrOpenSession(sessionId, hostConfig);
+    await this.downloadRecursive(session.sftp, remotePath, localPath, onProgress);
+  }
 
-    return new Promise((resolve, reject) => {
-      session.sftp.fastGet(
-        remotePath,
-        localPath,
-        {
-          step: (transferred, _chunk, totalBytes) => {
-            if (onProgress) {
-              onProgress(transferred, totalBytes);
-            }
-          },
-        },
-        (err) => {
-          if (err) return reject(err);
-          resolve();
-        }
-      );
+  private async deleteDirRecursive(sftp: SFTPWrapper, remoteDir: string): Promise<void> {
+    const entries = await new Promise<any[]>((resolve, reject) => {
+      sftp.readdir(remoteDir, (err, list) => {
+        if (err) return reject(err);
+        resolve(list);
+      });
+    });
+
+    for (const entry of entries) {
+      if (entry.filename === '.' || entry.filename === '..') continue;
+      const childPath = remoteDir.endsWith('/') ? `${remoteDir}${entry.filename}` : `${remoteDir}/${entry.filename}`;
+      const isChildDir = (entry.attrs.mode & 0o170000) === 0o040000;
+      if (isChildDir) {
+        await this.deleteDirRecursive(sftp, childPath);
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          sftp.unlink(childPath, (err) => (err ? reject(err) : resolve()));
+        });
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      sftp.rmdir(remoteDir, (err) => (err ? reject(err) : resolve()));
     });
   }
 
@@ -263,18 +365,16 @@ export class SFTPService {
   ): Promise<void> {
     const session = await this.getOrOpenSession(sessionId, hostConfig);
 
+    if (isDir) {
+      await this.deleteDirRecursive(session.sftp, remotePath);
+      return;
+    }
+
     return new Promise((resolve, reject) => {
-      if (isDir) {
-        session.sftp.rmdir(remotePath, (err) => {
-          if (err) return reject(err);
-          resolve();
-        });
-      } else {
-        session.sftp.unlink(remotePath, (err) => {
-          if (err) return reject(err);
-          resolve();
-        });
-      }
+      session.sftp.unlink(remotePath, (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
     });
   }
 
@@ -336,6 +436,12 @@ export class SFTPService {
         }
       }
       this.sessions.delete(sessionId);
+    }
+  }
+
+  public disconnectAll(): void {
+    for (const sessionId of Array.from(this.sessions.keys())) {
+      this.disconnect(sessionId);
     }
   }
 }

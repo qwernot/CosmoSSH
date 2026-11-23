@@ -1,7 +1,9 @@
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { AppDataPayload, CloudSyncConfig, HostConfig, HostGroup, CommandSnippet, AppSettings } from '../shared/types';
+
+const ENC_PREFIX = 'enc:v1:';
 
 const defaultSettings: AppSettings = {
   theme: 'cosmo-dark',
@@ -31,6 +33,104 @@ interface FullStoreData {
   syncConfig: CloudSyncConfig;
 }
 
+function canUseSafeStorage(): boolean {
+  try {
+    return app.isReady() && safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function encryptSecret(value?: string): string | undefined {
+  if (!value) return value;
+  if (value.startsWith(ENC_PREFIX)) return value;
+  if (!canUseSafeStorage()) return value;
+  try {
+    const encrypted = safeStorage.encryptString(value);
+    return ENC_PREFIX + encrypted.toString('base64');
+  } catch (err) {
+    console.error('Failed to encrypt secret via safeStorage:', err);
+    return value;
+  }
+}
+
+function decryptSecret(value?: string): string | undefined {
+  if (!value || !value.startsWith(ENC_PREFIX)) return value;
+  if (!canUseSafeStorage()) return value;
+  try {
+    const buf = Buffer.from(value.slice(ENC_PREFIX.length), 'base64');
+    return safeStorage.decryptString(buf);
+  } catch (err) {
+    console.error('Failed to decrypt secret via safeStorage:', err);
+    return '';
+  }
+}
+
+function encryptStoreForDisk(state: FullStoreData): FullStoreData {
+  return {
+    data: {
+      ...state.data,
+      hosts: (state.data.hosts || []).map((h) => ({
+        ...h,
+        password: encryptSecret(h.password),
+        privateKey: encryptSecret(h.privateKey),
+        passphrase: encryptSecret(h.passphrase),
+      })),
+    },
+    syncConfig: {
+      ...state.syncConfig,
+      token: encryptSecret(state.syncConfig.token) || '',
+    },
+  };
+}
+
+function decryptStoreFromDisk(raw: FullStoreData): { decrypted: FullStoreData; needsMigration: boolean } {
+  let needsMigration = false;
+  const encryptionReady = canUseSafeStorage();
+
+  const hosts = (raw.data?.hosts || []).map((h) => {
+    if (
+      encryptionReady &&
+      ((h.password && !h.password.startsWith(ENC_PREFIX)) ||
+        (h.privateKey && !h.privateKey.startsWith(ENC_PREFIX)) ||
+        (h.passphrase && !h.passphrase.startsWith(ENC_PREFIX)))
+    ) {
+      needsMigration = true;
+    }
+    return {
+      ...h,
+      password: decryptSecret(h.password),
+      privateKey: decryptSecret(h.privateKey),
+      passphrase: decryptSecret(h.passphrase),
+    };
+  });
+
+  const rawToken = raw.syncConfig?.token || '';
+  if (encryptionReady && rawToken && !rawToken.startsWith(ENC_PREFIX)) {
+    needsMigration = true;
+  }
+
+  return {
+    decrypted: {
+      data: {
+        version: raw.data?.version || app.getVersion() || '1.0.4',
+        updatedAt: raw.data?.updatedAt || Date.now(),
+        hosts,
+        groups: raw.data?.groups?.length ? raw.data.groups : defaultGroups,
+        snippets: raw.data?.snippets?.length ? raw.data.snippets : defaultSnippets,
+        settings: { ...defaultSettings, ...(raw.data?.settings || {}) },
+      },
+      syncConfig: {
+        workerUrl: raw.syncConfig?.workerUrl || 'https://cosmossh-sync.flat-mouse-41ef.workers.dev',
+        token: decryptSecret(rawToken) || '',
+        autoSync: raw.syncConfig?.autoSync ?? false,
+        lastSyncedAt: raw.syncConfig?.lastSyncedAt,
+      },
+    },
+    needsMigration,
+  };
+}
+
 export class AppStore {
   private filePath: string;
   private state: FullStoreData;
@@ -45,7 +145,13 @@ export class AppStore {
     try {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw) as FullStoreData;
+        const { decrypted, needsMigration } = decryptStoreFromDisk(parsed);
+        if (needsMigration) {
+          this.state = decrypted;
+          this.save();
+        }
+        return decrypted;
       }
     } catch (err) {
       console.error('Failed to load store, initializing defaults:', err);
@@ -53,7 +159,7 @@ export class AppStore {
 
     return {
       data: {
-        version: '1.0.0',
+        version: app.getVersion() || '1.0.4',
         updatedAt: Date.now(),
         hosts: [],
         groups: defaultGroups,
@@ -75,7 +181,8 @@ export class AppStore {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2), 'utf-8');
+      const diskData = encryptStoreForDisk(this.state);
+      fs.writeFileSync(this.filePath, JSON.stringify(diskData, null, 2), 'utf-8');
     } catch (err) {
       console.error('Failed to save store:', err);
     }

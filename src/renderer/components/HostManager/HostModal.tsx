@@ -35,8 +35,10 @@ export const HostModal: React.FC<HostModalProps> = ({
   const [color, setColor] = useState('#4facfe');
   const [showQuickAddGroup, setShowQuickAddGroup] = useState(false);
   const [quickGroupName, setQuickGroupName] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
+    setFormError(null);
     if (editingHost) {
       setName(editingHost.name);
       setHost(editingHost.host);
@@ -94,9 +96,10 @@ export const HostModal: React.FC<HostModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !host.trim() || !username.trim()) {
-      alert('请完整填写服务器名称、IP/域名及用户名');
+      setFormError('请完整填写服务器名称、IP/域名及用户名');
       return;
     }
+    setFormError(null);
 
     const newHost: HostConfig = {
       id: editingHost ? editingHost.id : `host_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -143,6 +146,11 @@ export const HostModal: React.FC<HostModalProps> = ({
 
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+              {formError}
+            </div>
+          )}
           {/* Server Name & Color */}
           <div className="grid grid-cols-4 gap-3">
             <div className="col-span-3">

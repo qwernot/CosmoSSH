@@ -1,11 +1,7 @@
 node_modules/
 dist/
 dist-electron/
-release/win-unpacked/
-release/linux-unpacked/
-release/builder-effective-config.yaml
-release/builder-debug.yml
-release/test-win.zip
+release/
 .env
 *.log
 .DS_Store

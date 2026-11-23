@@ -20,8 +20,12 @@ interface PreviousSample {
   };
 }
 
+const VIRTUAL_IFACE_REGEX = /^(lo|docker\d*|veth|br-|virbr|cni|flannel|cali|tun|tap|kube|wg)/i;
+const EXEC_TIMEOUT_MS = 5000;
+
 export class HostMonitorService {
   private activeTimers = new Map<string, NodeJS.Timeout>();
+  private fastFollowupTimers = new Map<string, NodeJS.Timeout>();
   private previousSamples = new Map<string, PreviousSample>();
   private isQuerying = new Set<string>();
 
@@ -35,8 +39,18 @@ export class HostMonitorService {
       return;
     }
 
-    // Run first sample immediately
-    this.pollStats(sessionId);
+    // Run first baseline sample immediately, then a fast follow-up 700ms later
+    // so CPU% and network delta rates appear in under 1 second.
+    this.pollStats(sessionId).then(() => {
+      if (!this.activeTimers.has(sessionId)) return;
+      const fastTimer = setTimeout(() => {
+        this.fastFollowupTimers.delete(sessionId);
+        if (this.activeTimers.has(sessionId)) {
+          this.pollStats(sessionId);
+        }
+      }, 700);
+      this.fastFollowupTimers.set(sessionId, fastTimer);
+    });
 
     const timer = setInterval(() => {
       this.pollStats(sessionId);
@@ -51,6 +65,11 @@ export class HostMonitorService {
       clearInterval(timer);
       this.activeTimers.delete(sessionId);
     }
+    const fastTimer = this.fastFollowupTimers.get(sessionId);
+    if (fastTimer) {
+      clearTimeout(fastTimer);
+      this.fastFollowupTimers.delete(sessionId);
+    }
     this.previousSamples.delete(sessionId);
     this.isQuerying.delete(sessionId);
   }
@@ -64,12 +83,10 @@ export class HostMonitorService {
   private async pollStats(sessionId: string) {
     const client = this.sshService.getClient(sessionId);
     if (!client) {
-      // Session disconnected or not found
       return;
     }
 
     if (this.isQuerying.has(sessionId)) {
-      // Previous query still in flight, skip this cycle to avoid congestion
       return;
     }
 
@@ -85,24 +102,51 @@ export class HostMonitorService {
       'echo "===UPTIME==="',
       'cat /proc/uptime 2>/dev/null',
       'echo "===DISK==="',
-      'df -k / 2>/dev/null | tail -n +2',
+      'df -Pk / 2>/dev/null | tail -n +2',
       'echo "===NET==="',
       'cat /proc/net/dev 2>/dev/null',
       'echo "===TOP==="',
-      'ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null | head -n 6',
+      '(ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null | head -n 6) || (ps -o pid,user,comm 2>/dev/null | head -n 6)',
+      'echo "===META==="',
+      'nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 0',
+      'grep -m1 ^PRETTY_NAME= /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d \'"\' || uname -sr',
     ].join('; ');
 
     try {
       const output = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        let activeStream: any = null;
+
+        const timeoutHandle = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try {
+              activeStream?.close();
+            } catch {
+              // ignore
+            }
+            reject(new Error('Monitor exec timeout'));
+          }
+        }, EXEC_TIMEOUT_MS);
+
+        const finish = (err: any, result?: string) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutHandle);
+          if (err) reject(err);
+          else resolve(result || '');
+        };
+
         client.exec(cmd, (err, stream) => {
-          if (err) return reject(err);
+          if (err) return finish(err);
+          activeStream = stream;
           let stdout = '';
           stream.on('data', (data: Buffer) => {
             stdout += data.toString('utf-8');
           });
           stream.stderr?.on('data', () => {});
-          stream.on('close', () => resolve(stdout));
-          stream.on('error', (e: any) => reject(e));
+          stream.on('close', () => finish(null, stdout));
+          stream.on('error', (e: any) => finish(e));
         });
       });
 
@@ -113,8 +157,8 @@ export class HostMonitorService {
           mainWindow.webContents.send(`monitor:stats:${sessionId}`, stats);
         }
       }
-    } catch (err) {
-      // Ignore transient errors on command exec
+    } catch {
+      // Ignore transient errors or timeouts on command exec
     } finally {
       this.isQuerying.delete(sessionId);
     }
@@ -124,15 +168,7 @@ export class HostMonitorService {
     if (!raw || !raw.includes('===CPU===')) return null;
 
     const sections = raw.split(/===[A-Z]+===/);
-    // sections indices correspond to:
-    // 0: empty before first header
-    // 1: CPU
-    // 2: MEM
-    // 3: LOAD
-    // 4: UPTIME
-    // 5: DISK
-    // 6: NET
-    // 7: TOP
+    // 1: CPU, 2: MEM, 3: LOAD, 4: UPTIME, 5: DISK, 6: NET, 7: TOP, 8: META
 
     const now = Date.now();
     const prev = this.previousSamples.get(sessionId);
@@ -174,7 +210,7 @@ export class HostMonitorService {
         currCpu.steal;
 
       const diffTotal = currTotal - prevTotal;
-      const diffIdle = (currCpu.idle + currCpu.iowait) - (prev.cpu.idle + prev.cpu.iowait);
+      const diffIdle = currCpu.idle + currCpu.iowait - (prev.cpu.idle + prev.cpu.iowait);
 
       if (diffTotal > 0) {
         cpuUsagePercent = Math.max(0, Math.min(100, Math.round(((diffTotal - diffIdle) / diffTotal) * 100)));
@@ -187,7 +223,7 @@ export class HostMonitorService {
     for (const line of memRaw.split('\n')) {
       const match = line.match(/^([a-zA-Z]+):\s*(\d+)/);
       if (match) {
-        memMap[match[1]] = parseInt(match[2], 10) * 1024; // convert kB to bytes
+        memMap[match[1]] = parseInt(match[2], 10) * 1024;
       }
     }
 
@@ -217,8 +253,8 @@ export class HostMonitorService {
     const uptimeRaw = (sections[4] || '').trim().split(/\s+/);
     const uptime = Math.floor(parseFloat(uptimeRaw[0]) || 0);
 
-    // 5. Parse Disk
-    const diskLines = (sections[5] || '').trim().split('\n');
+    // 5. Parse Disk (df -Pk ensures single line per filesystem even on long LVM paths)
+    const diskLines = (sections[5] || '').trim().split('\n').filter(Boolean);
     let diskStats = {
       filesystem: '/',
       mount: '/',
@@ -228,8 +264,9 @@ export class HostMonitorService {
       usagePercent: 0,
     };
 
-    if (diskLines.length > 0 && diskLines[0]) {
-      const diskParts = diskLines[0].trim().split(/\s+/);
+    if (diskLines.length > 0) {
+      // Join lines as fallback in case a non-POSIX df still wrapped
+      const diskParts = diskLines.join(' ').trim().split(/\s+/);
       if (diskParts.length >= 5) {
         const total = (parseInt(diskParts[1], 10) || 0) * 1024;
         const used = (parseInt(diskParts[2], 10) || 0) * 1024;
@@ -246,29 +283,45 @@ export class HostMonitorService {
       }
     }
 
-    // 6. Parse Network
+    // 6. Parse Network (exclude loopback and Docker/virtual bridge interfaces to avoid double counting)
     const netRaw = sections[6] || '';
-    let totalRxBytes = 0;
-    let totalTxBytes = 0;
+    let physicalRx = 0;
+    let physicalTx = 0;
+    let fallbackRx = 0;
+    let fallbackTx = 0;
+    let foundPhysical = false;
 
     for (const line of netRaw.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('lo:') || !trimmed.includes(':')) continue;
-      const [iface, dataPart] = trimmed.split(':');
-      if (!dataPart) continue;
-      const values = dataPart.trim().split(/\s+/).map(Number);
+      if (!trimmed || !trimmed.includes(':')) continue;
+      const colonIdx = trimmed.indexOf(':');
+      const iface = trimmed.slice(0, colonIdx).trim();
+      const dataPart = trimmed.slice(colonIdx + 1).trim();
+      if (!iface || iface === 'lo' || !dataPart) continue;
+
+      const values = dataPart.split(/\s+/).map(Number);
       if (values.length >= 9) {
-        totalRxBytes += values[0] || 0; // bytes received
-        totalTxBytes += values[8] || 0; // bytes transmitted
+        const rx = values[0] || 0;
+        const tx = values[8] || 0;
+        fallbackRx += rx;
+        fallbackTx += tx;
+        if (!VIRTUAL_IFACE_REGEX.test(iface)) {
+          foundPhysical = true;
+          physicalRx += rx;
+          physicalTx += tx;
+        }
       }
     }
+
+    const totalRxBytes = foundPhysical ? physicalRx : fallbackRx;
+    const totalTxBytes = foundPhysical ? physicalTx : fallbackTx;
 
     let rxBytesPerSec = 0;
     let txBytesPerSec = 0;
 
     if (prev && prev.timestamp < now) {
       const deltaSec = (now - prev.timestamp) / 1000;
-      if (deltaSec > 0.5) {
+      if (deltaSec > 0.3) {
         rxBytesPerSec = Math.max(0, Math.round((totalRxBytes - prev.net.rxBytes) / deltaSec));
         txBytesPerSec = Math.max(0, Math.round((totalTxBytes - prev.net.txBytes) / deltaSec));
       }
@@ -279,7 +332,6 @@ export class HostMonitorService {
     const topProcesses: ProcessInfo[] = [];
     const topLines = topRaw.trim().split('\n').filter(Boolean);
 
-    // Skip header line
     for (let i = 1; i < topLines.length && i <= 6; i++) {
       const parts = topLines[i].trim().split(/\s+/);
       if (parts.length >= 5) {
@@ -291,8 +343,21 @@ export class HostMonitorService {
         if (pid > 0) {
           topProcesses.push({ pid, user, cpu, mem, command });
         }
+      } else if (parts.length >= 3) {
+        // BusyBox ps fallback (PID USER COMMAND)
+        const pid = parseInt(parts[0], 10) || 0;
+        const user = parts[1] || '';
+        const command = parts.slice(2).join(' ');
+        if (pid > 0) {
+          topProcesses.push({ pid, user, cpu: 0, mem: 0, command });
+        }
       }
     }
+
+    // 8. Parse Meta (CPU cores & OS name)
+    const metaLines = (sections[8] || '').trim().split('\n').filter(Boolean);
+    const cores = parseInt(metaLines[0] || '0', 10) || undefined;
+    const osName = metaLines[1]?.trim() || undefined;
 
     // Update previous sample
     this.previousSamples.set(sessionId, {
@@ -306,8 +371,10 @@ export class HostMonitorService {
 
     return {
       timestamp: now,
+      osName,
       cpu: {
         usagePercent: cpuUsagePercent,
+        cores,
       },
       memory: {
         total: memTotal,

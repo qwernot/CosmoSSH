@@ -10,6 +10,8 @@ import path from 'path';
 import net from 'net';
 import { exec } from 'child_process';
 
+let handlersRegistered = false;
+
 function tryIcmpPing(host: string, timeoutMs: number = 1500): Promise<number | null> {
   return new Promise((resolve) => {
     if (!host || !/^[a-zA-Z0-9.\-_]+$/.test(host.trim())) {
@@ -25,7 +27,6 @@ function tryIcmpPing(host: string, timeoutMs: number = 1500): Promise<number | n
       if (err || !stdout) {
         return resolve(null);
       }
-      // Match patterns: time=23ms, time=23.4 ms, 时间=23ms, 时间<1ms, time<1ms
       const match = stdout.match(/(?:time|时间)[=<]([0-9.]+)\s*ms/i);
       if (match && match[1]) {
         const val = parseFloat(match[1]);
@@ -53,15 +54,12 @@ function tryTcpPing(host: string, port: number, timeoutMs: number = 3000): Promi
       resolve(Math.max(1, Math.round(latency)));
     };
 
-    // If remote SSH server transmits identification banner ("SSH-2.0-..."):
-    // This gives the TRUE remote network round-trip time and avoids local TUN/proxy fake-handshakes
     socket.once('data', () => {
       finish(performance.now() - start);
     });
 
     socket.on('connect', () => {
       const connectLatency = performance.now() - start;
-      // If no data (SSH banner) is received within 350ms, fall back to TCP connect handshake time
       setTimeout(() => {
         if (!hasResolved) {
           finish(connectLatency);
@@ -97,27 +95,49 @@ function tryTcpPing(host: string, port: number, timeoutMs: number = 3000): Promi
   });
 }
 
+export function bindWindowEvents(win: BrowserWindow) {
+  win.on('maximize', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximizedChange', true);
+    }
+  });
+
+  win.on('unmaximize', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximizedChange', false);
+    }
+  });
+}
+
 export function registerIpcHandlers(
-  mainWindow: BrowserWindow,
+  getMainWindow: () => BrowserWindow | null,
   store: AppStore,
   sshService: SSHService,
   sftpService: SFTPService,
   localFSService: LocalFSService,
   hostMonitorService: HostMonitorService
 ) {
+  if (handlersRegistered) return;
+  handlersRegistered = true;
+
+  const sendToRenderer = (channel: string, ...args: any[]) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, ...args);
+    }
+  };
+
   // Network Ping Handler
   ipcMain.handle('network:pingHost', async (_event, { host, port, timeout = 3000 }) => {
-    // 1. Try ICMP ping first (matches system terminal ping output)
     try {
       const icmp = await tryIcmpPing(host, Math.min(timeout, 1500));
       if (typeof icmp === 'number' && icmp > 0) {
         return { success: true, latency: icmp };
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
 
-    // 2. Fall back to TCP ping with banner verification (handles ICMP-blocked firewalls and TUN proxies)
     try {
       const latency = await tryTcpPing(host, port || 22, timeout);
       return { success: true, latency };
@@ -125,30 +145,27 @@ export function registerIpcHandlers(
       return { success: false, error: err.message || '连接失败' };
     }
   });
+
   // Store Handlers
-  ipcMain.handle('store:getData', () => {
-    return store.getData();
-  });
+  ipcMain.handle('store:getData', () => store.getData());
 
-  ipcMain.handle('store:setData', (_event, payload: Partial<AppDataPayload>) => {
-    return store.setData(payload);
-  });
+  ipcMain.handle('store:setData', (_event, payload: Partial<AppDataPayload>) =>
+    store.setData(payload)
+  );
 
-  ipcMain.handle('store:saveHost', (_event, host: HostConfig) => {
-    return store.saveHost(host);
-  });
+  ipcMain.handle('store:saveHost', (_event, host: HostConfig) =>
+    store.saveHost(host)
+  );
 
-  ipcMain.handle('store:deleteHost', (_event, id: string) => {
-    return store.deleteHost(id);
-  });
+  ipcMain.handle('store:deleteHost', (_event, id: string) =>
+    store.deleteHost(id)
+  );
 
-  ipcMain.handle('store:getSyncConfig', () => {
-    return store.getSyncConfig();
-  });
+  ipcMain.handle('store:getSyncConfig', () => store.getSyncConfig());
 
-  ipcMain.handle('store:setSyncConfig', (_event, config: CloudSyncConfig) => {
-    return store.setSyncConfig(config);
-  });
+  ipcMain.handle('store:setSyncConfig', (_event, config: CloudSyncConfig) =>
+    store.setSyncConfig(config)
+  );
 
   // SSH Handlers
   ipcMain.handle(
@@ -161,20 +178,14 @@ export function registerIpcHandlers(
           rows,
           cols,
           (data) => {
-            if (!mainWindow.isDestroyed()) {
-              mainWindow.webContents.send(`ssh:data:${sessionId}`, data);
-            }
+            sendToRenderer(`ssh:data:${sessionId}`, data);
           },
           (hadError) => {
             hostMonitorService.stopMonitoring(sessionId);
-            if (!mainWindow.isDestroyed()) {
-              mainWindow.webContents.send(`ssh:close:${sessionId}`, hadError);
-            }
+            sendToRenderer(`ssh:close:${sessionId}`, hadError);
           },
           (err) => {
-            if (!mainWindow.isDestroyed()) {
-              mainWindow.webContents.send(`ssh:error:${sessionId}`, err.message);
-            }
+            sendToRenderer(`ssh:error:${sessionId}`, err.message);
           }
         );
         return { success: true };
@@ -184,13 +195,13 @@ export function registerIpcHandlers(
     }
   );
 
-  ipcMain.handle('ssh:write', (_event, { sessionId, data }) => {
-    return sshService.write(sessionId, data);
-  });
+  ipcMain.handle('ssh:write', (_event, { sessionId, data }) =>
+    sshService.write(sessionId, data)
+  );
 
-  ipcMain.handle('ssh:resize', (_event, { sessionId, rows, cols }) => {
-    return sshService.resize(sessionId, rows, cols);
-  });
+  ipcMain.handle('ssh:resize', (_event, { sessionId, rows, cols }) =>
+    sshService.resize(sessionId, rows, cols)
+  );
 
   ipcMain.handle('ssh:disconnect', (_event, sessionId: string) => {
     hostMonitorService.stopMonitoring(sessionId);
@@ -246,9 +257,7 @@ export function registerIpcHandlers(
         localPath,
         remotePath,
         (transferred, total) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(`sftp:progress:${transferId}`, { transferred, total });
-          }
+          sendToRenderer(`sftp:progress:${transferId}`, { transferred, total });
         }
       );
       return { success: true };
@@ -265,9 +274,7 @@ export function registerIpcHandlers(
         remotePath,
         localPath,
         (transferred, total) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(`sftp:progress:${transferId}`, { transferred, total });
-          }
+          sendToRenderer(`sftp:progress:${transferId}`, { transferred, total });
         }
       );
       return { success: true };
@@ -314,7 +321,8 @@ export function registerIpcHandlers(
 
   // Native File Dialogs
   ipcMain.handle('dialog:openKeyFile', async () => {
-    const res = await dialog.showOpenDialog(mainWindow, {
+    const win = getMainWindow();
+    const res = await dialog.showOpenDialog(win!, {
       title: 'Select SSH Private Key',
       properties: ['openFile'],
       filters: [
@@ -334,7 +342,8 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle('dialog:selectUploadFiles', async () => {
-    const res = await dialog.showOpenDialog(mainWindow, {
+    const win = getMainWindow();
+    const res = await dialog.showOpenDialog(win!, {
       title: 'Select File(s) to Upload via SFTP',
       properties: ['openFile', 'multiSelections'],
     });
@@ -345,7 +354,8 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle('dialog:selectDownloadLocation', async (_event, defaultFileName: string) => {
-    const res = await dialog.showSaveDialog(mainWindow, {
+    const win = getMainWindow();
+    const res = await dialog.showSaveDialog(win!, {
       title: 'Save Downloaded File As',
       defaultPath: defaultFileName,
     });
@@ -357,41 +367,29 @@ export function registerIpcHandlers(
 
   // Window Controls
   ipcMain.on('window:minimize', () => {
-    mainWindow.minimize();
+    getMainWindow()?.minimize();
   });
 
   ipcMain.on('window:maximize', () => {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
+    const win = getMainWindow();
+    if (!win) return;
+    if (win.isMaximized()) {
+      win.unmaximize();
     } else {
-      mainWindow.maximize();
+      win.maximize();
     }
   });
 
   ipcMain.on('window:close', () => {
-    mainWindow.close();
+    getMainWindow()?.close();
   });
 
   ipcMain.handle('window:isMaximized', () => {
-    return mainWindow.isMaximized();
-  });
-
-  mainWindow.on('maximize', () => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window:maximizedChange', true);
-    }
-  });
-
-  mainWindow.on('unmaximize', () => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window:maximizedChange', false);
-    }
+    return getMainWindow()?.isMaximized() ?? false;
   });
 
   // Clipboard
-  ipcMain.handle('clipboard:readText', () => {
-    return clipboard.readText();
-  });
+  ipcMain.handle('clipboard:readText', () => clipboard.readText());
 
   ipcMain.handle('clipboard:writeText', (_event, text: string) => {
     clipboard.writeText(text);
@@ -405,16 +403,16 @@ export function registerIpcHandlers(
     }
   });
 
-  // SFTP Native Drag Out (Download to temp and call event.sender.startDrag)
+  // SFTP Native Drag Out (only used in single-pane mode if explicitly triggered)
   ipcMain.on('sftp:startDrag', async (event, { sessionId, hostConfig, remotePath, filename }) => {
     try {
       const dragCacheDir = path.join(app.getPath('temp'), 'cosmossh-drag-cache');
       if (!fs.existsSync(dragCacheDir)) {
         fs.mkdirSync(dragCacheDir, { recursive: true });
       }
-      const localFilePath = path.join(dragCacheDir, filename);
+      const safeName = path.basename(filename);
+      const localFilePath = path.join(dragCacheDir, safeName);
 
-      // Download file to temp directory
       await sftpService.download(sessionId, hostConfig, remotePath, localFilePath);
 
       if (fs.existsSync(localFilePath)) {
@@ -430,27 +428,27 @@ export function registerIpcHandlers(
   });
 
   // Local File System Handlers (WinSCP dual-pane)
-  ipcMain.handle('localFs:list', async (_event, dirPath?: string) => {
-    return localFSService.listDirectory(dirPath);
-  });
+  ipcMain.handle('localFs:list', async (_event, dirPath?: string) =>
+    localFSService.listDirectory(dirPath)
+  );
 
-  ipcMain.handle('localFs:getSpecialDirs', async () => {
-    return localFSService.getSpecialDirs();
-  });
+  ipcMain.handle('localFs:getSpecialDirs', async () =>
+    localFSService.getSpecialDirs()
+  );
 
-  ipcMain.handle('localFs:mkdir', async (_event, dirPath: string) => {
-    return localFSService.mkdir(dirPath);
-  });
+  ipcMain.handle('localFs:mkdir', async (_event, dirPath: string) =>
+    localFSService.mkdir(dirPath)
+  );
 
-  ipcMain.handle('localFs:delete', async (_event, targetPath: string) => {
-    return localFSService.delete(targetPath);
-  });
+  ipcMain.handle('localFs:delete', async (_event, targetPath: string) =>
+    localFSService.delete(targetPath)
+  );
 
-  ipcMain.handle('localFs:openPath', async (_event, targetPath: string) => {
-    return shell.openPath(targetPath);
-  });
+  ipcMain.handle('localFs:openPath', async (_event, targetPath: string) =>
+    shell.openPath(targetPath)
+  );
 
-  // Updater: Check for updates via GitHub Releases
+  // Updater: Check for updates via GitHub Releases (dynamic version from package.json)
   function compareVersions(latest: string, current: string): boolean {
     const l = latest.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
     const c = current.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
@@ -464,7 +462,7 @@ export function registerIpcHandlers(
   }
 
   ipcMain.handle('updater:checkUpdate', async (): Promise<UpdateInfo> => {
-    const currentVersion = '1.0.3';
+    const currentVersion = app.getVersion() || '1.0.4';
     try {
       const res = await fetch('https://api.github.com/repos/qwernot/CosmoSSH/releases/latest', {
         headers: { 'User-Agent': 'CosmoSSH-Client' },
@@ -493,7 +491,7 @@ export function registerIpcHandlers(
         releaseUrl: data.html_url || 'https://github.com/qwernot/CosmoSSH/releases',
         assets,
       };
-    } catch (err: any) {
+    } catch {
       return {
         hasUpdate: false,
         currentVersion,
@@ -509,7 +507,8 @@ export function registerIpcHandlers(
   ipcMain.handle('updater:downloadUpdate', async (_event, { url, filename }: { url: string; filename: string }) => {
     try {
       const downloadsDir = app.getPath('downloads');
-      const targetPath = path.join(downloadsDir, filename);
+      const safeName = path.basename(filename);
+      const targetPath = path.join(downloadsDir, safeName);
 
       const response = await fetch(url, {
         headers: { 'User-Agent': 'CosmoSSH-Client' },
@@ -523,22 +522,34 @@ export function registerIpcHandlers(
       const fileStream = fs.createWriteStream(targetPath);
       let received = 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          fileStream.write(Buffer.from(value));
-          received += value.length;
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('updater:downloadProgress', {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            const ok = fileStream.write(Buffer.from(value));
+            if (!ok) {
+              await new Promise<void>((resolve) => fileStream.once('drain', resolve));
+            }
+            received += value.length;
+            sendToRenderer('updater:downloadProgress', {
               received,
               total,
               percent: total > 0 ? Math.round((received / total) * 100) : 0,
             });
           }
         }
+
+        // Wait until stream finishes flushing all bytes to disk
+        await new Promise<void>((resolve, reject) => {
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+          fileStream.end();
+        });
+      } catch (writeErr) {
+        fileStream.destroy();
+        throw writeErr;
       }
-      fileStream.end();
 
       return { success: true, filePath: targetPath };
     } catch (err: any) {
