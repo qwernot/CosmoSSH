@@ -38,14 +38,14 @@ jobs:
         run: pnpm build
 
       - name: Package Linux (.deb)
-        run: pnpm exec electron-builder --linux deb
+        run: pnpm exec electron-builder --linux deb --publish never
 
       - name: Package Windows Portable (.zip & .7z)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          pnpm exec electron-builder --win --dir
+          pnpm exec electron-builder --win --dir --publish never
           (cd release/win-unpacked && zip -r "../CosmoSSH-${VERSION}-win.zip" .)
-          7z a -t7z -mx=9 "release/CosmoSSH-${VERSION}-win.7z" ./release/win-unpacked/*
+          7z a -t7z -mx=7 "release/CosmoSSH-${VERSION}-win.7z" ./release/win-unpacked/*
           ls -lh release/
 
       - name: Create GitHub Release and Upload Assets

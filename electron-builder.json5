@@ -8,6 +8,7 @@
   "directories": {
     "output": "release"
   },
+  "publish": null,
   "npmRebuild": false,
   "files": [
     "dist/**/*",
