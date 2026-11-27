@@ -50,11 +50,12 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const isLinux = navigator.userAgent.toLowerCase().includes('linux');
   const isWindows = navigator.userAgent.toLowerCase().includes('win');
 
-  const recommendedAsset: UpdateReleaseAsset | undefined = updateInfo.assets.find((a) => {
-    if (isLinux) return a.name.endsWith('.deb');
-    if (isWindows) return a.name.endsWith('.zip') || a.name.endsWith('.7z');
-    return false;
-  }) || updateInfo.assets[0];
+  const recommendedAsset: UpdateReleaseAsset | undefined =
+    (isLinux && updateInfo.assets.find((a) => a.name.endsWith('.deb'))) ||
+    (isWindows &&
+      (updateInfo.assets.find((a) => a.name.endsWith('.zip')) ||
+        updateInfo.assets.find((a) => a.name.endsWith('.7z')))) ||
+    updateInfo.assets[0];
 
   const handleStartInAppDownload = async (asset: UpdateReleaseAsset) => {
     setDownloading(true);

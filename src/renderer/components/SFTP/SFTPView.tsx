@@ -26,6 +26,7 @@ import { LocalFilePane } from './LocalFilePane';
 import { InputDialog, ConfirmDialog } from '../Common/DialogModal';
 
 interface SFTPViewProps {
+  isVisible: boolean;
   hosts: HostConfig[];
   initialHost?: HostConfig | null;
 }
@@ -36,15 +37,16 @@ type InputDialogMode =
   | { type: 'rename'; item: SFTPFileItem }
   | null;
 
-export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
+export const SFTPView: React.FC<SFTPViewProps> = ({ isVisible, hosts, initialHost }) => {
   const [selectedHostId, setSelectedHostId] = useState<string>(initialHost?.id || hosts[0]?.id || '');
   const [currentPath, setCurrentPath] = useState<string>('/');
   const [pathInput, setPathInput] = useState<string>('/');
   const [files, setFiles] = useState<SFTPFileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadedHostIdRef = useRef<string | null>(null);
 
-  // WinSCP Dual-Pane Mode
+  // Dual-Pane Mode
   const [isDualPane, setIsDualPane] = useState<boolean>(true);
   const [localPath, setLocalPath] = useState<string>('');
   const [localRefreshTrigger, setLocalRefreshTrigger] = useState<number>(0);
@@ -116,14 +118,16 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
       .catch(console.error);
   }, []);
 
-  // Always load root '/' cleanly whenever switching to a different host
+  // Load root '/' only when SFTP tab is visible and host changes (avoids unwanted SSH connection on app startup)
   useEffect(() => {
-    if (selectedHost) {
+    if (!isVisible || !selectedHost) return;
+    if (loadedHostIdRef.current !== selectedHost.id) {
+      loadedHostIdRef.current = selectedHost.id;
       setCurrentPath('/');
       setPathInput('/');
       loadDirectory('/', selectedHost);
     }
-  }, [selectedHost?.id]);
+  }, [isVisible, selectedHost?.id]);
 
   const loadDirectory = async (targetPath: string, hostOverride?: HostConfig) => {
     const host = hostOverride || selectedHost;
@@ -511,7 +515,7 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
         </div>
       )}
 
-      {/* Top Bar: Host Selector & WinSCP Dual-Pane Mode Switcher */}
+      {/* Top Bar: Host Selector & Dual-Pane Mode Switcher */}
       <header className="h-14 px-5 border-b border-cosmo-800 flex items-center justify-between shrink-0 bg-cosmo-900/60 backdrop-blur">
         <div className="flex items-center gap-3">
           <FolderSync className="w-5 h-5 text-cosmo-cyan" />
@@ -557,15 +561,15 @@ export const SFTPView: React.FC<SFTPViewProps> = ({ hosts, initialHost }) => {
                 ? 'bg-cosmo-cyan/15 text-cosmo-cyan border-cosmo-cyan/40 shadow-glow-cyan/10'
                 : 'bg-cosmo-800 text-slate-300 border-cosmo-700 hover:bg-cosmo-750'
             }`}
-            title="切换 WinSCP 双栏传输模式 / 单栏远程模式"
+            title="切换双栏传输模式 / 单栏远程模式"
           >
             <Columns className="w-3.5 h-3.5" />
-            <span>{isDualPane ? 'WinSCP 双栏模式 (开启)' : '单栏模式'}</span>
+            <span>{isDualPane ? '双栏模式 (开启)' : '单栏模式'}</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content Area: WinSCP Dual-Pane (Left: Local, Right: Remote) */}
+      {/* Main Content Area: Dual-Pane (Left: Local, Right: Remote) */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Pane: Local PC File System */}
         {isDualPane && (

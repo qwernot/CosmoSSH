@@ -269,6 +269,7 @@ export const App: React.FC = () => {
 
           <div className={`flex-1 flex flex-col h-full overflow-hidden ${currentTab === 'sftp' ? '' : 'hidden'}`}>
             <SFTPView
+              isVisible={currentTab === 'sftp'}
               hosts={appData.hosts}
               initialHost={sftpTargetHost}
             />
@@ -289,7 +290,10 @@ export const App: React.FC = () => {
               onSaveSettings={handleSaveSettings}
               appData={appData}
               onImportData={handleUpdateAppData}
-              onOpenUpdater={() => setIsUpdateModalOpen(true)}
+              onOpenUpdater={(info) => {
+                if (info) setUpdateInfo(info);
+                setIsUpdateModalOpen(true);
+              }}
               updateInfo={updateInfo}
             />
           </div>

@@ -37,10 +37,19 @@ jobs:
       - name: Build application (Renderer + Main + Preload)
         run: pnpm build
 
-      - name: Package Linux (.deb)
-        run: pnpm exec electron-builder --linux deb --publish never
+      - name: Package Linux (.deb) and verify zero hardlinks
+        env:
+          USE_HARD_LINKS: "false"
+        run: |
+          pnpm exec electron-builder --linux deb --publish never
+          if dpkg-deb -c release/*.deb | grep -E "^h| link to "; then
+            echo "ERROR: Hardlinks detected inside .deb package!"
+            exit 1
+          fi
 
       - name: Package Windows Portable (.zip & .7z)
+        env:
+          USE_HARD_LINKS: "false"
         run: |
           VERSION=$(node -p "require('./package.json').version")
           pnpm exec electron-builder --win --dir --publish never
@@ -65,27 +74,17 @@ jobs:
             所有平台的最新安装包（Linux `.deb`、Windows 便携 `.zip`、Windows 高压缩 `.7z`）均已由 GitHub Actions 自动构建并发布在下方 Assets 列表中，直接点击下载即可使用！
 
             ### 🚀 本次更新亮点 (${{ github.ref_name }})
-            - 🛠️ **核心稳定性与 Electron 体验全面升级**：
-              - 彻底替换 Electron 原生不支持的 `prompt()` / `alert()` / `confirm()`，改用深空主题自研交互弹窗与 Toast 提示，全面修复 SFTP 新建文件夹、新建文件、重命名等功能。
-              - 修复设置页与云同步页异步加载后表单不自动回显的问题，云端 Pull 同步现已完整恢复终端偏好设置。
-              - 修复 SSH 会话关闭时的事件监听泄漏及连接首屏欢迎信息偶发丢失竞态，应用退出时自动清理全部监控与连接。
-              - 补全 Tailwind 缺失色阶（`cosmo-750` / `cosmo-400`），优化更新下载器流落盘完整性。
-            - ⌨️ **终端新增一键重连 & 日志搜索 (`Ctrl+F`)**：
-              - 会话意外断开后，终端工具栏直接提供 **「🔄 重新连接」** 一键原位重连。
-              - 启用 `@xterm/addon-search`，按下 `Ctrl+F` 或点击搜索按钮即可快速检索终端历史输出。
-            - 📂 **SFTP 双栏传输深度增强**：
-              - 完整支持 **远程文件夹递归下载** 与 **非空远程目录递归删除**。
-              - 下载完成后自动刷新左栏本地文件列表；修复双栏拖拽触发双重下载的问题。
-              - 在线编辑器新增 2 MB 大文件与二进制文件保护拦截，防止误点大文件导致卡死。
-              - 修复传输队列完成后的图标持续旋转问题及切换服务器时路径错乱问题。
-            - 📊 **硬件实时监控增强 (Agentless)**：
-              - 改用 `df -Pk /` 彻底修复 LVM 长设备名折行导致磁盘显示 `0%` 的问题。
-              - 新增 5 秒执行超时保护防死锁，过滤 Docker / 虚拟桥接网卡避免网速重复叠加，兼容 Alpine/BusyBox。
-              - 首轮采样后 700ms 自动极速二次采样，连上终端 1 秒内即出真实 CPU 与网速；切离终端页自动暂停轮询。
-              - 详细 HUD 仪表盘新增操作系统发行版名称与 CPU 核心数展示。
-            - 🔐 **本地凭据安全加密 & 自动化 CI 构建**：
-              - 接入 Electron 原生 `safeStorage`（Windows DPAPI / Linux Keyring / macOS Keychain），本地存储的服务器密码、私钥与同步 Token 自动加密落盘，无缝兼容旧版配置平滑迁移。
-              - 版本号统一由 `package.json` 单一数据源自动注入；构建发布迁移至 GitHub Actions 云端自动化打包。
+            - 🐧 **彻底修复 Linux `.deb` 安装硬链接报错**：
+              - 解决因图标文件被重复打包产生跨分区硬链接导致的 `新建硬链接 ./opt/CosmoSSH/resources/assets/icon.png 时出错` 问题。
+              - 规范化图标权限（`644`），并在 CI 中增加 `.deb` 零硬链接自动门禁检测。
+            - 📂 **双栏文件传输界面精简与按需连接优化**：
+              - 统一界面文案为简洁的 **「双栏模式」** / **「本地电脑」**。
+              - SFTP 标签页改为按需连接（首次切入 SFTP 页面时才建立连接），避免软件一启动就在后台自动发起多余 SSH 连接。
+              - 增强本地目录容错：无 Desktop 目录的精简 Linux 环境自动回退至家目录，输入不存在路径时给出明确错误提示。
+            - 🔄 **软件内检查更新体验修复**：
+              - 修复在设置页手动点击「检查更新」发现新版本时，若启动检测未命中则更新弹窗不显示的问题。
+              - 网络异常或接口限流时准确提示错误信息，不再误报“已是最新版本”；Windows 端软件内更新优先推荐 `.zip` 便携包。
+            - 🔐 **本地凭据硬件级加密 (`safeStorage`) & 终端搜索 (`Ctrl+F`) & 断线一键重连 & 无探针硬件监控** 全部内置。
           draft: false
           prerelease: false
           generate_release_notes: false

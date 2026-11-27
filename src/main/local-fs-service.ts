@@ -13,8 +13,20 @@ export class LocalFSService {
   }
 
   public async listDirectory(targetPath?: string): Promise<{ path: string; files: SFTPFileItem[] }> {
-    const defaultPath = app.getPath('desktop');
-    const resolvedPath = targetPath && fs.existsSync(targetPath) ? path.resolve(targetPath) : defaultPath;
+    const desktopDir = app.getPath('desktop');
+    const homeDir = app.getPath('home');
+    const defaultPath = fs.existsSync(desktopDir) ? desktopDir : homeDir;
+
+    let resolvedPath: string;
+    if (targetPath && targetPath.trim()) {
+      const candidate = path.resolve(targetPath.trim());
+      if (!fs.existsSync(candidate)) {
+        throw new Error(`本地目录不存在: ${candidate}`);
+      }
+      resolvedPath = candidate;
+    } else {
+      resolvedPath = defaultPath;
+    }
 
     const entries = await fs.promises.readdir(resolvedPath, { withFileTypes: true });
     const files: SFTPFileItem[] = [];

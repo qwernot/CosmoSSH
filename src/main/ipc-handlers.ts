@@ -427,7 +427,7 @@ export function registerIpcHandlers(
     }
   });
 
-  // Local File System Handlers (WinSCP dual-pane)
+  // Local File System Handlers (Dual-Pane)
   ipcMain.handle('localFs:list', async (_event, dirPath?: string) =>
     localFSService.listDirectory(dirPath)
   );
@@ -491,7 +491,7 @@ export function registerIpcHandlers(
         releaseUrl: data.html_url || 'https://github.com/qwernot/CosmoSSH/releases',
         assets,
       };
-    } catch {
+    } catch (err: any) {
       return {
         hasUpdate: false,
         currentVersion,
@@ -500,6 +500,7 @@ export function registerIpcHandlers(
         publishedAt: '',
         releaseUrl: 'https://github.com/qwernot/CosmoSSH/releases',
         assets: [],
+        error: err?.message || '网络连接异常',
       };
     }
   });

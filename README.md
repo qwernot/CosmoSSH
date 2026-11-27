@@ -11,18 +11,18 @@ CosmoSSH 是专为运维、开发者和极客打造的新一代轻量级、高�
 - **官方 Releases 发布页**：[https://github.com/qwernot/CosmoSSH/releases](https://github.com/qwernot/CosmoSSH/releases)
 - **作者个人主页**：[https://666228.xyz](https://666228.xyz)
 
-| 平台 | 最新安装包 (v1.0.4) | 格式 | 说明 |
+| 平台 | 最新安装包 (v1.0.5) | 格式 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **Windows 64位 (标准包)** | [CosmoSSH-1.0.4-win.zip](https://github.com/qwernot/CosmoSSH/releases) | `.zip` 便携压缩包 | 解压后双击 `CosmoSSH.exe` 即可直接使用 |
-| **Windows 64位 (极小体积)** | [CosmoSSH-1.0.4-win.7z](https://github.com/qwernot/CosmoSSH/releases) | `.7z` 高压缩包 | 7z 高压缩绿色版 |
-| **Linux (Debian/Ubuntu)** | [cosmossh_1.0.4_amd64.deb](https://github.com/qwernot/CosmoSSH/releases) | `.deb` 标准包 | `sudo dpkg -i cosmossh_1.0.4_amd64.deb` |
+| **Windows 64位 (标准包)** | [CosmoSSH-1.0.5-win.zip](https://github.com/qwernot/CosmoSSH/releases) | `.zip` 便携压缩包 | 解压后双击 `CosmoSSH.exe` 即可直接使用 |
+| **Windows 64位 (极小体积)** | [CosmoSSH-1.0.5-win.7z](https://github.com/qwernot/CosmoSSH/releases) | `.7z` 高压缩包 | 7z 高压缩绿色版 |
+| **Linux (Debian/Ubuntu)** | [cosmossh_1.0.5_amd64.deb](https://github.com/qwernot/CosmoSSH/releases) | `.deb` 标准包 | `sudo dpkg -i cosmossh_1.0.5_amd64.deb` |
 
 > 💡 **Windows 打开提示「Windows 已保护你的电脑 / 存在风险」的解决方法**：  
 > CosmoSSH 为个人开源项目，未购买每年昂贵的商业 EV 代码签名证书。若 Windows 弹出安全警告：点击弹窗中的「**更多信息 (More info)**」➔ 点击「**仍要运行 (Run anyway)**」即可（仅需首次操作）。或右键解压后的 `CosmoSSH.exe` ➔ 选择「属性」➔ 勾选最下方的「**解除锁定 (Unblock)**」确定即可。
 
 ---
 
-## 核心特性 (v1.0.4)
+## 核心特性 (v1.0.5)
 
 - 🔐 **本地凭据硬件级加密 (`safeStorage`)**：通过系统级安全存储（Windows DPAPI / Linux Keyring / macOS Keychain）自动加密本地服务器密码、SSH 私钥与同步 Token，告别明文存储。
 - ⌨️ **终端一键重连 & `Ctrl+F` 日志搜索**：断线后支持工具栏原位一键重连；内置 `@xterm/addon-search` 支持终端内实时关键词检索。
@@ -30,7 +30,7 @@ CosmoSSH 是专为运维、开发者和极客打造的新一代轻量级、高�
   - **终端常驻微型监控条**：连接终端会话后，顶栏动态展示 CPU 占用百分比、内存使用量/总量、根磁盘空间、网络实时上下行带宽（`↓ 128 KB/s ↑ 35 KB/s`）及系统负载。
   - **高科技 HUD 详细监控仪表盘**：一键呼出高质感深空发光仪表盘，实时呈现操作系统版本、CPU 核心数、4 组动态仪表、Swap 分区、连续开机时长与 **Top 5 高负载活跃进程排查列表**。
   - **零探针零侵入 (Agentless)**：完全复用已有 SSH 连接，支持 LVM 单行磁盘解析、虚拟网卡流量过滤、超时保护与切页自动休眠。
-- 📂 **WinSCP 风格双栏文件传输 (双向来回拖拽)**：
+- 📂 **双栏文件传输 (双向来回拖拽)**：
   - **左栏本地电脑**：内置本地资源管理器，一键快捷跳转「桌面」、「下载」和「家目录」，支持新建目录、删除与系统资源管理器打开；下载完成后自动刷新。
   - **右栏远程服务器**：支持文件与**文件夹递归上传/下载**、**非空目录递归删除**、大文件/二进制文件编辑安全拦截。
   - **来回拖拽极速传输**：左拉到右即上传，右拉到左即下载，并提供「一键下载到桌面」快捷按钮。

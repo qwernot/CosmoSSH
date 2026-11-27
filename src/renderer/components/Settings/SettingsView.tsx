@@ -20,7 +20,7 @@ interface SettingsViewProps {
   onSaveSettings: (settings: AppSettings) => void;
   appData: AppDataPayload;
   onImportData: (data: AppDataPayload) => void;
-  onOpenUpdater?: () => void;
+  onOpenUpdater?: (info?: UpdateInfo) => void;
   updateInfo?: UpdateInfo | null;
 }
 
@@ -56,10 +56,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setCheckUpdateResult(null);
     try {
       const res = await window.cosmossh.updater.checkUpdate();
-      if (res.hasUpdate) {
+      if (res.error) {
+        setCheckUpdateResult(`检查更新失败: ${res.error}`);
+      } else if (res.hasUpdate) {
         setCheckUpdateResult(`发现新版本 v${res.latestVersion}！`);
         if (onOpenUpdater) {
-          onOpenUpdater();
+          onOpenUpdater(res);
         }
       } else {
         setCheckUpdateResult(`当前已是最新版本 (v${__APP_VERSION__})`);

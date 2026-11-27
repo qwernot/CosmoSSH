@@ -214,7 +214,7 @@ export const api = {
       ipcRenderer.invoke('updater:showInFolder', filePath),
   },
 
-  // Local File System (WinSCP Dual-Pane)
+  // Local File System (Dual-Pane)
   localFs: {
     list: (dirPath?: string): Promise<{ path: string; files: SFTPFileItem[] }> =>
       ipcRenderer.invoke('localFs:list', dirPath),

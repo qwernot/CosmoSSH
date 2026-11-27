@@ -236,7 +236,7 @@ export const LocalFilePane: React.FC<LocalFilePaneProps> = ({
       <div className="h-12 px-3 border-b border-cosmo-800 flex items-center justify-between shrink-0 bg-cosmo-900/50">
         <div className="flex items-center gap-2">
           <Monitor className="w-4 h-4 text-emerald-400" />
-          <span className="text-xs font-bold text-slate-200">本地电脑 (WinSCP 左栏)</span>
+          <span className="text-xs font-bold text-slate-200">本地电脑</span>
         </div>
 
         {/* Quick Jump Shortcuts: Desktop, Downloads, Home */}

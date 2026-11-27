@@ -15,9 +15,6 @@
     "dist-electron/**/*",
     "package.json"
   ],
-  "extraResources": [
-    "assets/**/*"
-  ],
   "asar": true,
   "asarUnpack": [
     "node_modules/ssh2/**/*"
@@ -36,7 +33,7 @@
     "category": "Development;Utility;",
     "synopsis": "Next-generation SSH Terminal & SFTP Client",
     "description": "CosmoSSH is a modern, fast, secure SSH terminal, SFTP client and server manager with Cloudflare E2EE sync.",
-    "icon": "assets/icon.png",
+    "icon": "build/icons",
     "maintainer": "CosmoSSH Team <support@cosmossh.app>"
   },
   "deb": {
@@ -58,7 +55,7 @@
         "arch": ["x64"]
       }
     ],
-    "icon": "assets/icon.ico"
+    "icon": "build/icon.ico"
   },
   "nsis": {
     "oneClick": false,

@@ -99,6 +99,7 @@ export interface UpdateInfo {
   publishedAt: string;
   releaseUrl: string;
   assets: UpdateReleaseAsset[];
+  error?: string;
 }
 
 export interface ProcessInfo {
